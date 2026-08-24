@@ -5,10 +5,13 @@
 // la variable d'environnement ADMIN_KEY côté serveur.
 
 const express = require('express');
+const fs = require('fs');
 const db = require('../lib/db');
+const { newId } = require('../lib/id');
 const { requireAdminKey } = require('../middleware/auth');
 const { confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments');
 const { getPaymentNumbers, setPaymentNumber } = require('../lib/settings');
+const { adUpload } = require('../lib/adUpload');
 
 const router = express.Router();
 router.use(requireAdminKey);
@@ -86,6 +89,68 @@ router.post('/withdrawals/:id/mark-paid', (req, res) => {
   if (!withdrawal) return res.status(404).json({ error: 'NOT_FOUND' });
   db.prepare(`UPDATE withdrawals SET status = 'paid' WHERE id = ?`).run(withdrawal.id);
   res.json({ withdrawal: db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawal.id) });
+});
+
+// --- Annonces publicitaires (annonceurs locaux mauritaniens) ---
+
+// GET /api/admin/ads — toutes les annonces avec leurs statistiques.
+router.get('/ads', (req, res) => {
+  const rows = db.prepare('SELECT * FROM ads ORDER BY createdAt DESC').all();
+  res.json({ ads: rows });
+});
+
+// POST /api/admin/ads — multipart/form-data : advertiserName, targetUrl, placement,
+// startDate?, endDate?, image (fichier).
+router.post('/ads', adUpload.single('image'), (req, res) => {
+  const { advertiserName, targetUrl, placement, startDate, endDate } = req.body || {};
+  if (!advertiserName || !placement) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'MISSING_FIELDS', message: 'advertiserName et placement sont requis.' });
+  }
+  if (!['banner', 'ad-gate'].includes(placement)) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'INVALID_PLACEMENT' });
+  }
+  const id = newId('ad');
+  db.prepare(`
+    INSERT INTO ads (id, advertiserName, imagePath, targetUrl, placement, startDate, endDate)
+    VALUES (@id, @advertiserName, @imagePath, @targetUrl, @placement, @startDate, @endDate)
+  `).run({
+    id, advertiserName,
+    imagePath: req.file ? req.file.filename : null,
+    targetUrl: targetUrl || null,
+    placement,
+    startDate: startDate || null,
+    endDate: endDate || null,
+  });
+  res.status(201).json({ ad: db.prepare('SELECT * FROM ads WHERE id = ?').get(id) });
+});
+
+// PATCH /api/admin/ads/:id — { active?, advertiserName?, targetUrl?, startDate?, endDate? }
+router.patch('/ads/:id', (req, res) => {
+  const ad = db.prepare('SELECT * FROM ads WHERE id = ?').get(req.params.id);
+  if (!ad) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  const fields = ['active', 'advertiserName', 'targetUrl', 'startDate', 'endDate'];
+  const updates = {};
+  for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'NO_FIELDS' });
+
+  const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
+  db.prepare(`UPDATE ads SET ${setClause} WHERE id = @id`).run({ ...updates, id: ad.id });
+  res.json({ ad: db.prepare('SELECT * FROM ads WHERE id = ?').get(ad.id) });
+});
+
+// DELETE /api/admin/ads/:id
+router.delete('/ads/:id', (req, res) => {
+  const ad = db.prepare('SELECT * FROM ads WHERE id = ?').get(req.params.id);
+  if (!ad) return res.status(404).json({ error: 'NOT_FOUND' });
+  db.prepare('DELETE FROM ads WHERE id = ?').run(ad.id);
+  if (ad.imagePath) {
+    const { AD_IMAGES_DIR } = require('../lib/adUpload');
+    try { fs.unlinkSync(require('path').join(AD_IMAGES_DIR, ad.imagePath)); } catch (e) {}
+  }
+  res.json({ message: 'Annonce supprimée.' });
 });
 
 module.exports = router;
