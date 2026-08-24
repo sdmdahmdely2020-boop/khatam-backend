@@ -1,0 +1,8 @@
+node_modules/
+khatam.db
+khatam.db-*
+dev.db
+.env
+uploads/documents/*.pdf
+!uploads/documents/.gitkeep
+npm-debug.log

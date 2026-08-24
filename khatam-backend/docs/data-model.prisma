@@ -1,0 +1,157 @@
+// Khatam — schéma de base de données
+// Dev : SQLite (fichier local, zéro configuration)
+// Prod : changer provider = "postgresql" et DATABASE_URL dans .env (voir README)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  PROFESSOR
+  ADMIN
+}
+
+model User {
+  id               String   @id @default(cuid())
+  role             Role
+  fullName         String
+  phone            String   @unique
+  email            String?  @unique
+  passwordHash     String
+  serie            String? // série suivie par l'élève (ex: "C")
+  bio              String? // présentation du professeur
+  matieres         String? // matières enseignées, séparées par virgules (professeur)
+
+  // Sécurité — liaison à un seul appareil
+  deviceId         String?
+  deviceBoundAt    DateTime?
+  deviceLabel      String? // ex: "Android 13 · Chrome" (indicatif, envoyé par le client)
+
+  // Portefeuille professeur
+  walletBalance    Int      @default(0) // en MRU
+  walletWithdrawn  Int      @default(0)
+
+  // Boost recherche (professeur)
+  boostActiveUntil DateTime?
+
+  createdAt        DateTime @default(now())
+
+  documents        Document[]
+  purchases        Purchase[]
+  favorites        Favorite[]
+  adUnlocks        AdUnlock[]
+  withdrawals      Withdrawal[]
+  likesGiven       Like[]      @relation("StudentLikes")
+  likesReceived    Like[]      @relation("ProfLikes")
+  aiSubmissions    AiSubmission[]
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  title        String
+  matiere      String
+  serie        String   @default("C")
+  annee        Int
+  type         String   // sujet | corrige | cours | exercices | video | blanc
+  prix         Int
+  free         Boolean  @default(false)
+  adUnlock     Boolean  @default(false)
+  aiGrading    Boolean  @default(false)
+  filePath     String   // chemin serveur du fichier source (jamais exposé directement)
+  previewPath  String?  // aperçu limité (ex: 1ère page), servi publiquement
+  views        Int      @default(0)
+  statut       String   @default("publie") // publie | brouillon | retire
+
+  professorId  String
+  professor    User     @relation(fields: [professorId], references: [id])
+
+  createdAt    DateTime @default(now())
+
+  purchases    Purchase[]
+  favorites    Favorite[]
+  adUnlocks    AdUnlock[]
+  aiSubmissions AiSubmission[]
+}
+
+model Purchase {
+  id          String   @id @default(cuid())
+  userId      String
+  documentId  String
+  amount      Int
+  method      String   // bankily | masrivi | sedad
+  status      String   @default("pending") // pending | confirmed | failed
+  providerRef String?  // référence renvoyée par la passerelle
+  createdAt   DateTime @default(now())
+  confirmedAt DateTime?
+
+  user        User     @relation(fields: [userId], references: [id])
+  document    Document @relation(fields: [documentId], references: [id])
+}
+
+model AdUnlock {
+  id         String   @id @default(cuid())
+  userId     String
+  documentId String
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id])
+  document   Document @relation(fields: [documentId], references: [id])
+
+  @@unique([userId, documentId])
+}
+
+model Favorite {
+  id         String   @id @default(cuid())
+  userId     String
+  documentId String
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id])
+  document   Document @relation(fields: [documentId], references: [id])
+
+  @@unique([userId, documentId])
+}
+
+model Like {
+  id           String   @id @default(cuid())
+  studentId    String
+  professorId  String
+  createdAt    DateTime @default(now())
+
+  student      User     @relation("StudentLikes", fields: [studentId], references: [id])
+  professor    User     @relation("ProfLikes", fields: [professorId], references: [id])
+
+  @@unique([studentId, professorId])
+}
+
+model Withdrawal {
+  id           String   @id @default(cuid())
+  professorId  String
+  amount       Int
+  method       String   // bankily | masrivi | sedad
+  accountRef   String   // numéro de téléphone / compte destinataire
+  status       String   @default("pending") // pending | paid | rejected
+  createdAt    DateTime @default(now())
+
+  professor    User     @relation(fields: [professorId], references: [id])
+}
+
+model AiSubmission {
+  id           String   @id @default(cuid())
+  studentId    String
+  documentId   String
+  answerText   String
+  note         Float?
+  feedback     String?
+  status       String   @default("pending") // pending | graded
+  createdAt    DateTime @default(now())
+
+  student      User     @relation(fields: [studentId], references: [id])
+  document     Document @relation(fields: [documentId], references: [id])
+}
