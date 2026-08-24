@@ -6,6 +6,7 @@ const { newId } = require('../lib/id');
 const { upload } = require('../lib/upload');
 const { requireAuth } = require('../middleware/auth');
 const { hasAccess } = require('../lib/access');
+const { deleteDocumentCascade } = require('../lib/cascade');
 
 const router = express.Router();
 
@@ -145,14 +146,16 @@ router.patch('/:id', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
   res.json({ document: toPublicDoc(updated, req.user.id) });
 });
 
-// DELETE /api/documents/:id — propriétaire uniquement
+// DELETE /api/documents/:id — propriétaire uniquement.
+// Utilise deleteDocumentCascade (lib/cascade.js) : un DELETE direct échouerait dès
+// que le document a été acheté/mis en favori/etc. au moins une fois, car SQLite
+// (foreign_keys = ON) refuse de supprimer une ligne encore référencée ailleurs.
 router.delete('/:id', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
   const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'NOT_FOUND' });
   if (doc.professorId !== req.user.id) return res.status(403).json({ error: 'FORBIDDEN' });
 
-  db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
-  try { fs.unlinkSync(doc.filePath); } catch (e) {}
+  deleteDocumentCascade(doc.id);
   res.json({ message: 'Document supprimé.' });
 });
 
