@@ -11,6 +11,8 @@ const professorRoutes = require('./routes/professors');
 const walletRoutes = require('./routes/wallet');
 const aiRoutes = require('./routes/ai');
 const adminRoutes = require('./routes/admin');
+const adsRoutes = require('./routes/ads');
+const { AD_IMAGES_DIR } = require('./lib/adUpload');
 
 const app = express();
 
@@ -20,6 +22,10 @@ app.use(morgan('dev'));
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'khatam-backend', time: new Date().toISOString() }));
 
+// Images des bannières publicitaires — publiques, servies directement (pas de
+// filigrane : ce ne sont pas des documents à protéger, juste des visuels marketing).
+app.use('/uploads/ads', express.static(AD_IMAGES_DIR));
+
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/payments', paymentRoutes);
@@ -28,6 +34,7 @@ app.use('/api', aiRoutes); // /api/documents/:id/ai-grade, /api/ai/history
 app.use('/api/professors', professorRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/ads', adsRoutes);
 
 // Gestion d'erreurs centralisée (ex: erreurs multer, exceptions non gérées dans les routes)
 app.use((err, req, res, next) => {
