@@ -3,7 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const { newId } = require('./id');
 
-const DOCS_DIR = path.join(__dirname, '..', '..', 'uploads', 'documents');
+// UPLOAD_DIR permet de pointer vers un disque persistant (ex. /var/data/uploads/documents
+// sur Render) au lieu du dossier du projet, qui est effacé à chaque redéploiement/redémarrage
+// sur les plans sans disque persistant. Voir README.md, section "Passer en production".
+const DOCS_DIR = process.env.UPLOAD_DIR
+  ? process.env.UPLOAD_DIR
+  : path.join(__dirname, '..', '..', 'uploads', 'documents');
 fs.mkdirSync(DOCS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
