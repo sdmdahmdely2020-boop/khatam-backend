@@ -129,6 +129,20 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS ads (
+  id             TEXT PRIMARY KEY,
+  advertiserName TEXT NOT NULL,
+  imagePath      TEXT,
+  targetUrl      TEXT,
+  placement      TEXT NOT NULL DEFAULT 'banner' CHECK(placement IN ('banner','ad-gate')),
+  startDate      TEXT,
+  endDate        TEXT,
+  active         INTEGER NOT NULL DEFAULT 1,
+  impressions    INTEGER NOT NULL DEFAULT 0,
+  clicks         INTEGER NOT NULL DEFAULT 0,
+  createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_documents_filters ON documents(serie, matiere, annee, type);
 CREATE INDEX IF NOT EXISTS idx_documents_prof ON documents(professorId);
 CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(userId);
