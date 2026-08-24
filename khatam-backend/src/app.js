@@ -10,6 +10,7 @@ const accessRoutes = require('./routes/access'); // /documents/:id/view, /ad-unl
 const professorRoutes = require('./routes/professors');
 const walletRoutes = require('./routes/wallet');
 const aiRoutes = require('./routes/ai');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api', accessRoutes); // monte /api/documents/:id/view, /api/documents/
 app.use('/api', aiRoutes); // /api/documents/:id/ai-grade, /api/ai/history
 app.use('/api/professors', professorRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Gestion d'erreurs centralisée (ex: erreurs multer, exceptions non gérées dans les routes)
 app.use((err, req, res, next) => {
