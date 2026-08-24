@@ -124,10 +124,27 @@ CREATE TABLE IF NOT EXISTS ai_submissions (
   createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS platform_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_documents_filters ON documents(serie, matiere, annee, type);
 CREATE INDEX IF NOT EXISTS idx_documents_prof ON documents(professorId);
 CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(userId);
 CREATE INDEX IF NOT EXISTS idx_likes_prof ON likes(professorId);
 `);
+
+// Migration légère : ajoute les colonnes introduites après la création initiale
+// du schéma. Nécessaire car la base réelle en production existe déjà (disque
+// persistant Render) — "CREATE TABLE IF NOT EXISTS" ci-dessus ne touche pas
+// une table existante. SQLite supporte ADD COLUMN directement.
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn('purchases', 'studentRef', 'TEXT');
 
 module.exports = db;
