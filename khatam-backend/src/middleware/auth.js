@@ -44,4 +44,22 @@ function requireAuth(opts = {}) {
   };
 }
 
-module.exports = { requireAuth, JWT_SECRET };
+// Protège les routes d'administration (panneau de confirmation des paiements,
+// réglages des numéros Bankily/Masrivi/Sedad). Volontairement simple (une clé
+// secrète unique, pas de compte) car il n'y a qu'un seul administrateur pour
+// l'instant. La clé doit être définie dans la variable d'environnement
+// ADMIN_KEY ; si elle n'est pas définie, toutes les routes admin sont
+// refusées par défaut (fail closed) plutôt que de rester ouvertes.
+function requireAdminKey(req, res, next) {
+  const configured = process.env.ADMIN_KEY;
+  const provided = req.headers['x-admin-key'];
+  if (!configured) {
+    return res.status(503).json({ error: 'ADMIN_NOT_CONFIGURED', message: "ADMIN_KEY n'est pas configurée côté serveur." });
+  }
+  if (!provided || provided !== configured) {
+    return res.status(401).json({ error: 'INVALID_ADMIN_KEY', message: 'Clé administrateur invalide.' });
+  }
+  next();
+}
+
+module.exports = { requireAuth, requireAdminKey, JWT_SECRET };
