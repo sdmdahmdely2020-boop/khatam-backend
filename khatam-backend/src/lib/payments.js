@@ -61,4 +61,36 @@ function verifyWebhookSignature(method, req) {
   return true;
 }
 
-module.exports = { PROVIDERS, initiatePayment, verifyWebhookSignature };
+const db = require('./db');
+
+/**
+ * Confirme un achat en attente : marque la ligne "confirmed" et crédite le
+ * portefeuille du professeur concerné. Appelée soit par le webhook (futur
+ * vrai opérateur), soit par le panneau d'administration (confirmation
+ * manuelle après vérification du numéro de reçu — voir routes/admin.js).
+ * Pas de commission appliquée pour l'instant (le professeur reçoit 100% du
+ * prix) — à ajuster ici le jour où un taux de commission est décidé.
+ */
+function confirmPurchase(purchaseId) {
+  const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchaseId);
+  if (!purchase) {
+    const err = new Error('Achat introuvable.'); err.status = 404; throw err;
+  }
+  if (purchase.status === 'confirmed') return purchase;
+
+  db.prepare(`UPDATE purchases SET status = 'confirmed', confirmedAt = datetime('now') WHERE id = ?`).run(purchase.id);
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(purchase.documentId);
+  db.prepare('UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?').run(purchase.amount, doc.professorId);
+  return db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id);
+}
+
+function rejectPurchase(purchaseId) {
+  const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchaseId);
+  if (!purchase) {
+    const err = new Error('Achat introuvable.'); err.status = 404; throw err;
+  }
+  db.prepare(`UPDATE purchases SET status = 'failed' WHERE id = ?`).run(purchase.id);
+  return db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id);
+}
+
+module.exports = { PROVIDERS, initiatePayment, verifyWebhookSignature, confirmPurchase, rejectPurchase };
