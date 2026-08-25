@@ -48,7 +48,7 @@ router.post('/documents/:id/ai-grade', requireAuth({ roles: ['STUDENT'] }), subm
   }
   if (!hasAccess(req.user.id, doc)) {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch (e) {} }
-    return res.status(403).json({ error: 'LOCKED' });
+    return res.status(403).json({ error: 'LOCKED', message: "Ce document n'est pas débloqué sur ce compte. Achetez-le ou regardez une publicité, puis réessayez." });
   }
 
   const answerText = (req.body && req.body.answerText) || '';
