@@ -161,5 +161,9 @@ function ensureColumn(table, column, definition) {
 }
 ensureColumn('purchases', 'studentRef', 'TEXT');
 ensureColumn('users', 'photoPath', 'TEXT');
+ensureColumn('ai_submissions', 'answerFilePath', 'TEXT');
+ensureColumn('ai_submissions', 'answerFileType', 'TEXT');
+ensureColumn('ai_submissions', 'strengthsJson', 'TEXT');
+ensureColumn('ai_submissions', 'weaknessesJson', 'TEXT');
 
 module.exports = db;
