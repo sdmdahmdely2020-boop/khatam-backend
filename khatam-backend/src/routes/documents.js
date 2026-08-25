@@ -7,6 +7,7 @@ const { upload } = require('../lib/upload');
 const { requireAuth } = require('../middleware/auth');
 const { hasAccess } = require('../lib/access');
 const { deleteDocumentCascade } = require('../lib/cascade');
+const { ensureDocumentPreview } = require('../lib/preview');
 
 const router = express.Router();
 
@@ -20,7 +21,7 @@ function isBoosted(professor) {
 }
 
 function toPublicDoc(doc, viewerId) {
-  const professor = db.prepare('SELECT id, fullName, matieres FROM users WHERE id = ?').get(doc.professorId);
+  const professor = db.prepare('SELECT id, fullName, matieres, photoPath FROM users WHERE id = ?').get(doc.professorId);
   return {
     id: doc.id,
     title: doc.title,
@@ -35,7 +36,13 @@ function toPublicDoc(doc, viewerId) {
     views: doc.views,
     statut: doc.statut,
     createdAt: doc.createdAt,
-    professor: { id: professor.id, fullName: professor.fullName, matieres: professor.matieres },
+    previewUrl: `/api/documents/${doc.id}/preview`,
+    professor: {
+      id: professor.id,
+      fullName: professor.fullName,
+      matieres: professor.matieres,
+      photoUrl: professor.photoPath ? `/uploads/photos/${professor.photoPath}` : null,
+    },
     unlocked: hasAccess(viewerId, doc),
   };
 }
@@ -89,6 +96,27 @@ router.get('/:id', (req, res) => {
       professorLikes: likesCount(professor.id),
     },
   });
+});
+
+// GET /api/documents/:id/preview — image d'aperçu (en-tête net, reste flouté
+// dans les pixels), publique, pour la vignette du catalogue et la modale
+// "Aperçu" avant paiement. Générée à la demande si elle n'existe pas encore
+// (documents publiés avant cette fonctionnalité), puis mise en cache sur
+// disque et référencée dans documents.previewPath.
+router.get('/:id/preview', async (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'NOT_FOUND' });
+  try {
+    const previewPath = await ensureDocumentPreview(doc);
+    if (previewPath !== doc.previewPath) {
+      db.prepare('UPDATE documents SET previewPath = ? WHERE id = ?').run(previewPath, doc.id);
+    }
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.resolve(previewPath));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'PREVIEW_FAILED', message: "Impossible de générer l'aperçu de ce document." });
+  }
 });
 
 // POST /api/documents — professeur uniquement, multipart/form-data avec champ "file"
