@@ -23,6 +23,7 @@ router.get('/:id', (req, res) => {
   res.json({
     professor: {
       id: p.id, fullName: p.fullName, bio: p.bio, matieres: p.matieres,
+      photoUrl: p.photoPath ? `/uploads/photos/${p.photoPath}` : null,
       likes: likesCount(p.id), boosted: isBoosted(p), documentsCount: docs,
     },
   });
