@@ -13,6 +13,7 @@ const aiRoutes = require('./routes/ai');
 const adminRoutes = require('./routes/admin');
 const adsRoutes = require('./routes/ads');
 const { AD_IMAGES_DIR } = require('./lib/adUpload');
+const { PHOTO_DIR } = require('./lib/photoUpload');
 
 const app = express();
 
@@ -25,6 +26,9 @@ app.get('/api/health', (req, res) => res.json({ ok: true, service: 'khatam-backe
 // Images des bannières publicitaires — publiques, servies directement (pas de
 // filigrane : ce ne sont pas des documents à protéger, juste des visuels marketing).
 app.use('/uploads/ads', express.static(AD_IMAGES_DIR));
+
+// Photos de profil (élèves et professeurs) — publiques, pas de filigrane.
+app.use('/uploads/photos', express.static(PHOTO_DIR));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
