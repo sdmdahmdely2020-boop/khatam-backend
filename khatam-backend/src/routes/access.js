@@ -5,6 +5,7 @@ const { newId } = require('../lib/id');
 const { requireAuth } = require('../middleware/auth');
 const { hasAccess } = require('../lib/access');
 const { watermarkPdf } = require('../lib/watermark');
+const { renderAllPagesJpeg } = require('../lib/preview');
 
 const router = express.Router();
 
@@ -36,6 +37,39 @@ router.get('/documents/:id/view', requireAuth({ roles: ['STUDENT', 'PROFESSOR'] 
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'WATERMARK_FAILED', message: "Impossible d'ouvrir ce document pour le moment." });
+  }
+});
+
+// GET /api/documents/:id/view-pages — visionneuse sécurisée, variante "images".
+// Filigrane la même façon que /view, mais rend ensuite chaque page en JPEG au
+// lieu de servir le PDF filigrané tel quel. Pourquoi : un vrai fichier PDF,
+// même filigrané, ouvert dans le lecteur natif du navigateur (via <iframe>)
+// affiche ses propres boutons "télécharger" / "imprimer" — un moyen trivial
+// de récupérer une copie exacte du document malgré le filigrane. En images,
+// ce bouton n'existe plus. La capture d'écran reste techniquement possible
+// (comme sur n'importe quelle app, y compris Netflix ou une banque) — voir la
+// bannière affichée dans la visionneuse à ce sujet.
+router.get('/documents/:id/view-pages', requireAuth({ roles: ['STUDENT', 'PROFESSOR'] }), async (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'NOT_FOUND' });
+
+  if (!hasAccess(req.user.id, doc)) {
+    return res.status(403).json({ error: 'LOCKED', message: 'Document non débloqué. Achetez-le ou regardez une publicité.' });
+  }
+
+  db.prepare('UPDATE documents SET views = views + 1 WHERE id = ?').run(doc.id);
+
+  try {
+    const sourceBytes = fs.readFileSync(doc.filePath);
+    const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+    const label = `${req.user.fullName} · ${req.user.phone}`;
+    const watermarked = await watermarkPdf(sourceBytes, { label, timestamp });
+    const pages = await renderAllPagesJpeg(Buffer.from(watermarked));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ pages: pages.map((p) => 'data:image/jpeg;base64,' + p.toString('base64')) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'RENDER_FAILED', message: "Impossible d'ouvrir ce document pour le moment." });
   }
 });
 
