@@ -1,9 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 const db = require('../lib/db');
 const { newId } = require('../lib/id');
-const { JWT_SECRET } = require('../middleware/auth');
+const { JWT_SECRET, requireAuth } = require('../middleware/auth');
+const { photoUpload, PHOTO_DIR } = require('../lib/photoUpload');
 
 const router = express.Router();
 
@@ -13,7 +16,7 @@ function signToken(user) {
 
 function publicUser(u) {
   const { passwordHash, ...rest } = u;
-  return rest;
+  return { ...rest, photoUrl: u.photoPath ? `/uploads/photos/${u.photoPath}` : null };
 }
 
 // POST /api/auth/signup
@@ -106,6 +109,33 @@ router.post('/device/release', async (req, res) => {
 
   db.prepare(`UPDATE users SET deviceId = NULL, deviceBoundAt = NULL, deviceLabel = NULL WHERE id = ?`).run(user.id);
   res.json({ message: 'Appareil délié. La prochaine connexion liera un nouvel appareil.' });
+});
+
+// POST /api/auth/me/photo — dépose/remplace la photo de profil de
+// l'utilisateur connecté (élève ou professeur), champ multipart "photo".
+router.post('/me/photo', requireAuth(), photoUpload.single('photo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'MISSING_FILE', message: 'Image requise (champ "photo").' });
+
+  const prev = db.prepare('SELECT photoPath FROM users WHERE id = ?').get(req.user.id);
+  db.prepare('UPDATE users SET photoPath = ? WHERE id = ?').run(req.file.filename, req.user.id);
+  if (prev && prev.photoPath) {
+    try { fs.unlinkSync(path.join(PHOTO_DIR, prev.photoPath)); } catch (e) {}
+  }
+
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
+});
+
+// DELETE /api/auth/me/photo — retire la photo de profil (retour à l'avatar
+// à initiales, déjà affiché par défaut côté frontend).
+router.delete('/me/photo', requireAuth(), (req, res) => {
+  const prev = db.prepare('SELECT photoPath FROM users WHERE id = ?').get(req.user.id);
+  if (prev && prev.photoPath) {
+    try { fs.unlinkSync(path.join(PHOTO_DIR, prev.photoPath)); } catch (e) {}
+  }
+  db.prepare('UPDATE users SET photoPath = NULL WHERE id = ?').run(req.user.id);
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ user: publicUser(updated) });
 });
 
 module.exports = router;
