@@ -160,5 +160,6 @@ function ensureColumn(table, column, definition) {
   }
 }
 ensureColumn('purchases', 'studentRef', 'TEXT');
+ensureColumn('users', 'photoPath', 'TEXT');
 
 module.exports = db;
