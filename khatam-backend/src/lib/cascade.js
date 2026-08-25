@@ -23,6 +23,7 @@ function deleteDocumentCascade(documentId) {
   tx();
 
   if (doc.filePath) { try { fs.unlinkSync(doc.filePath); } catch (e) {} }
+  if (doc.previewPath) { try { fs.unlinkSync(doc.previewPath); } catch (e) {} }
   return doc;
 }
 
@@ -46,6 +47,10 @@ function deleteUserCascade(userId) {
   });
   tx();
 
+  if (user.photoPath) {
+    const { PHOTO_DIR } = require('./photoUpload');
+    try { fs.unlinkSync(require('path').join(PHOTO_DIR, user.photoPath)); } catch (e) {}
+  }
   return user;
 }
 
