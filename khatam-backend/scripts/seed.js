@@ -45,33 +45,39 @@ async function main() {
   const passwordHash = await bcrypt.hash('demo1234', 10);
 
   const profs = [
-    { fullName: 'Pr. Sidi Mohamed L.', phone: '22200000001', matieres: 'Mathématiques', bio: 'Professeur de mathématiques, 12 ans d’expérience, spécialiste Bac Série C.' },
-    { fullName: 'Pr. Aichetou B.', phone: '22200000002', matieres: 'Physique', bio: 'Professeure de physique-chimie, corrections détaillées.' },
+    { fullName: 'Pr. Sidi Mohamed L.', phone: '22200000001', email: 'sidi.mohamed.demo@khatam.mr', matieres: 'Mathématiques', bio: 'Professeur de mathématiques, 12 ans d’expérience, spécialiste Bac Série C.', etablissement: 'Lycée National de Nouakchott', experienceYears: 12 },
+    { fullName: 'Pr. Aichetou B.', phone: '22200000002', email: 'aichetou.b.demo@khatam.mr', matieres: 'Physique', bio: 'Professeure de physique-chimie, corrections détaillées.', etablissement: 'Lycée El Mina', experienceYears: 8 },
   ];
 
+  // Comptes de démonstration : considérés d'emblée "vérifiés" et "approuvés"
+  // (emailVerified=1, professorStatus='approved') — comme les comptes réels
+  // qui existaient déjà avant l'introduction de la vérification par email et
+  // de l'approbation admin (voir la migration de secours dans lib/db.js).
+  // Sans cela, les comptes de démo ne pourraient plus se connecter du tout
+  // (EMAIL_NOT_VERIFIED) après un redémarrage sur une base fraîche.
   const profIds = [];
   for (const p of profs) {
     const existing = db.prepare('SELECT id FROM users WHERE phone = ?').get(p.phone);
     if (existing) { profIds.push(existing.id); continue; }
     const id = newId('user');
     db.prepare(`
-      INSERT INTO users (id, role, fullName, phone, passwordHash, bio, matieres)
-      VALUES (?, 'PROFESSOR', ?, ?, ?, ?, ?)
-    `).run(id, p.fullName, p.phone, passwordHash, p.bio, p.matieres);
+      INSERT INTO users (id, role, fullName, phone, email, passwordHash, bio, matieres, etablissement, experienceYears, professorStatus, emailVerified)
+      VALUES (?, 'PROFESSOR', ?, ?, ?, ?, ?, ?, ?, ?, 'approved', 1)
+    `).run(id, p.fullName, p.phone, p.email, passwordHash, p.bio, p.matieres, p.etablissement, p.experienceYears);
     profIds.push(id);
   }
 
   const students = [
-    { fullName: 'Mariem El Houssein', phone: '22211111111' },
-    { fullName: 'Mohamed Vall K.', phone: '22211111112' },
+    { fullName: 'Mariem El Houssein', phone: '22211111111', email: 'mariem.eh.demo@khatam.mr' },
+    { fullName: 'Mohamed Vall K.', phone: '22211111112', email: 'mohamed.vk.demo@khatam.mr' },
   ];
   const studentIds = [];
   for (const s of students) {
     const existing = db.prepare('SELECT id FROM users WHERE phone = ?').get(s.phone);
     if (existing) { studentIds.push(existing.id); continue; }
     const id = newId('user');
-    db.prepare(`INSERT INTO users (id, role, fullName, phone, passwordHash, serie) VALUES (?, 'STUDENT', ?, ?, ?, 'C')`)
-      .run(id, s.fullName, s.phone, passwordHash);
+    db.prepare(`INSERT INTO users (id, role, fullName, phone, email, passwordHash, serie, emailVerified) VALUES (?, 'STUDENT', ?, ?, ?, ?, 'C', 1)`)
+      .run(id, s.fullName, s.phone, s.email, passwordHash);
     studentIds.push(id);
   }
 

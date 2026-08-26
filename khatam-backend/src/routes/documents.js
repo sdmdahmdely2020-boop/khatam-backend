@@ -206,9 +206,15 @@ router.post('/', requireAuth({ roles: ['PROFESSOR'] }), upload.single('file'), (
   }
 
   const id = newId('doc');
+  // Un professeur dont le compte n'est pas encore approuvé par un
+  // administrateur (professorStatus !== 'approved') peut préparer ses
+  // documents, mais rien de ce qu'il envoie n'est publié tant que
+  // l'approbation n'a pas eu lieu — le document est créé en "brouillon"
+  // quoi qu'il arrive, visible seulement par lui-même (voir GET / plus haut).
+  const initialStatut = req.user.professorStatus === 'approved' ? 'publie' : 'brouillon';
   db.prepare(`
-    INSERT INTO documents (id, title, matiere, serie, annee, type, prix, free, adUnlock, aiGrading, filePath, professorId)
-    VALUES (@id, @title, @matiere, @serie, @annee, @type, @prix, @free, @adUnlock, @aiGrading, @filePath, @professorId)
+    INSERT INTO documents (id, title, matiere, serie, annee, type, prix, free, adUnlock, aiGrading, filePath, professorId, statut)
+    VALUES (@id, @title, @matiere, @serie, @annee, @type, @prix, @free, @adUnlock, @aiGrading, @filePath, @professorId, @statut)
   `).run({
     id, title, matiere,
     serie: serieValue,
@@ -220,10 +226,17 @@ router.post('/', requireAuth({ roles: ['PROFESSOR'] }), upload.single('file'), (
     aiGrading: toBit(aiGrading),
     filePath: req.file.path,
     professorId: req.user.id,
+    statut: initialStatut,
   });
 
   const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
-  res.status(201).json({ document: toPublicDoc(doc, req.user.id) });
+  res.status(201).json({
+    document: toPublicDoc(doc, req.user.id),
+    // Indique au frontend qu'il doit afficher un message explicatif : le
+    // document a bien été enregistré, mais reste invisible aux élèves tant
+    // que le compte professeur n'est pas approuvé par un administrateur.
+    professorPending: initialStatut === 'brouillon' && req.user.professorStatus !== 'approved',
+  });
 });
 
 // PATCH /api/documents/:id — propriétaire uniquement (prix, statut, etc.)
@@ -255,6 +268,16 @@ router.patch('/:id', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
 
   if (body.statut !== undefined) {
     if (!VALID_STATUTS.includes(body.statut)) return res.status(400).json({ error: 'INVALID_STATUT', message: `statut doit être l'un de: ${VALID_STATUTS.join(', ')}` });
+    // Republier (ou publier pour la première fois) est refusé tant que le
+    // compte professeur n'est pas approuvé — sinon un professeur en attente
+    // pourrait contourner le blocage de POST / en créant un brouillon puis en
+    // le repassant lui-même en "publie" via ce PATCH.
+    if (body.statut === 'publie' && req.user.professorStatus !== 'approved') {
+      return res.status(403).json({
+        error: 'PROFESSOR_NOT_APPROVED',
+        message: "Votre compte professeur doit d'abord être approuvé par un administrateur avant de pouvoir publier des documents.",
+      });
+    }
     updates.statut = body.statut;
   }
 

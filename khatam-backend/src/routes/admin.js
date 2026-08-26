@@ -74,6 +74,47 @@ router.post('/purchases/:id/reject', (req, res) => {
   }
 });
 
+// --- Approbation des comptes professeurs ---
+//
+// Un professeur qui s'inscrit peut se connecter et préparer ses documents
+// (voir routes/documents.js), mais rien n'est visible aux élèves tant que son
+// compte n'a pas été examiné et approuvé ici — l'inscription seule ne suffit
+// pas ("je veux inscrire juste de vraies personnes pas de personnes au
+// hasard"). L'approbation ne publie PAS automatiquement les brouillons déjà
+// créés : le professeur doit les publier lui-même ensuite (certains
+// brouillons peuvent avoir été laissés ainsi volontairement).
+
+// GET /api/admin/professors/pending — comptes professeurs en attente d'examen.
+router.get('/professors/pending', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, fullName, phone, email, etablissement, matieres, experienceYears, createdAt,
+           (SELECT COUNT(*) FROM documents d WHERE d.professorId = users.id) AS documentsCount
+    FROM users
+    WHERE role = 'PROFESSOR' AND professorStatus = 'pending'
+    ORDER BY createdAt ASC
+  `).all();
+  res.json({ professors: rows });
+});
+
+// POST /api/admin/professors/:id/approve — le compte peut désormais publier.
+router.post('/professors/:id/approve', (req, res) => {
+  const user = db.prepare(`SELECT * FROM users WHERE id = ? AND role = 'PROFESSOR'`).get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'NOT_FOUND' });
+  db.prepare(`UPDATE users SET professorStatus = 'approved' WHERE id = ?`).run(user.id);
+  res.json({ professor: db.prepare('SELECT id, fullName, phone, professorStatus FROM users WHERE id = ?').get(user.id) });
+});
+
+// POST /api/admin/professors/:id/reject — le compte reste créé (l'élève/le
+// professeur peut se reconnecter et voir pourquoi), mais ne pourra jamais
+// publier tant qu'un administrateur ne l'approuve pas explicitement ensuite
+// via la route ci-dessus.
+router.post('/professors/:id/reject', (req, res) => {
+  const user = db.prepare(`SELECT * FROM users WHERE id = ? AND role = 'PROFESSOR'`).get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'NOT_FOUND' });
+  db.prepare(`UPDATE users SET professorStatus = 'rejected' WHERE id = ?`).run(user.id);
+  res.json({ professor: db.prepare('SELECT id, fullName, phone, professorStatus FROM users WHERE id = ?').get(user.id) });
+});
+
 // GET /api/admin/withdrawals/pending — demandes de retrait des professeurs à traiter.
 router.get('/withdrawals/pending', (req, res) => {
   const rows = db.prepare(`
@@ -180,7 +221,7 @@ const SEED_PHONES = ['22200000001', '22200000002', '22211111111', '22211111112']
 // avec les compteurs globaux (achats, retraits, annonces, favoris, likes, IA).
 router.get('/overview', (req, res) => {
   const users = db.prepare(`
-    SELECT u.id, u.role, u.fullName, u.phone, u.createdAt, u.walletBalance,
+    SELECT u.id, u.role, u.fullName, u.phone, u.email, u.emailVerified, u.professorStatus, u.createdAt, u.walletBalance,
            (SELECT COUNT(*) FROM documents d WHERE d.professorId = u.id) AS documentsCount
     FROM users u
     ORDER BY u.createdAt ASC

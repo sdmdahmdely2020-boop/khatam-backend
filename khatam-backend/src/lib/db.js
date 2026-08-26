@@ -143,10 +143,24 @@ CREATE TABLE IF NOT EXISTS ads (
   createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Codes de vérification par email (inscription). Toujours utilisée, que
+-- l'envoi Gmail (voir lib/email.js) soit configuré ou non — contrairement à
+-- Twilio Verify (SMS, abandonné : payant), l'envoi par email n'est qu'un
+-- transport, il ne gère pas lui-même l'état des codes.
+CREATE TABLE IF NOT EXISTS email_codes (
+  id        TEXT PRIMARY KEY,
+  email     TEXT NOT NULL,
+  code      TEXT NOT NULL,
+  attempts  INTEGER NOT NULL DEFAULT 0,
+  expiresAt TEXT NOT NULL,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_documents_filters ON documents(serie, matiere, annee, type);
 CREATE INDEX IF NOT EXISTS idx_documents_prof ON documents(professorId);
 CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(userId);
 CREATE INDEX IF NOT EXISTS idx_likes_prof ON likes(professorId);
+CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email);
 `);
 
 // Migration légère : ajoute les colonnes introduites après la création initiale
@@ -157,7 +171,9 @@ function ensureColumn(table, column, definition) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
   if (!cols.includes(column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    return true; // colonne ajoutée à l'instant (première fois sur cette base)
   }
+  return false;
 }
 ensureColumn('purchases', 'studentRef', 'TEXT');
 ensureColumn('users', 'photoPath', 'TEXT');
@@ -165,5 +181,27 @@ ensureColumn('ai_submissions', 'answerFilePath', 'TEXT');
 ensureColumn('ai_submissions', 'answerFileType', 'TEXT');
 ensureColumn('ai_submissions', 'strengthsJson', 'TEXT');
 ensureColumn('ai_submissions', 'weaknessesJson', 'TEXT');
+
+// Vérification de l'email (gratuite, via un compte Gmail personnel — voir
+// lib/email.js ; le SMS payant via Twilio a été abandonné à la demande de
+// l'utilisateur) + dossier professeur (établissement, matière enseignée,
+// années d'expérience) + statut d'approbation. Le téléphone reste un champ
+// requis (contact, Bankily/Masrivi) mais n'est plus lui-même vérifié par code.
+const emailVerifiedJustAdded = ensureColumn('users', 'emailVerified', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'etablissement', 'TEXT');
+ensureColumn('users', 'experienceYears', 'INTEGER');
+ensureColumn('users', 'professorStatus', 'TEXT');
+
+if (emailVerifiedJustAdded) {
+  // Migration unique, exécutée une seule fois (le jour où la colonne
+  // "emailVerified" est ajoutée à une base existante) : tous les comptes
+  // déjà créés avant l'introduction de cette vérification ont pu utiliser
+  // l'application sans jamais avoir eu cette étape à faire — on les
+  // considère de confiance plutôt que de les bloquer rétroactivement au
+  // prochain login. Seuls les comptes créés APRÈS cette mise à jour devront
+  // vérifier leur email et (pour les professeurs) être approuvés.
+  db.exec(`UPDATE users SET emailVerified = 1`);
+  db.exec(`UPDATE users SET professorStatus = 'approved' WHERE role = 'PROFESSOR'`);
+}
 
 module.exports = db;
