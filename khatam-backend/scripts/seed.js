@@ -25,6 +25,18 @@ async function makeSamplePdf(title, lines) {
 }
 
 async function main() {
+  // En production, une fois de vrais professeurs/élèves inscrits, on ne veut
+  // plus que ce script (lancé à CHAQUE démarrage via `npm run seed && npm
+  // start`) recrée les comptes de démonstration après qu'un administrateur
+  // les ait supprimés via POST /api/admin/reset-demo-data — sinon ils
+  // reviennent avec le même mot de passe connu ("demo1234") à chaque redeploy.
+  // Mettre SEED_DEMO_DATA=false sur l'environnement de production désactive
+  // complètement ce script.
+  if (process.env.SEED_DEMO_DATA === 'false') {
+    console.log('SEED_DEMO_DATA=false — seed ignoré (production).');
+    return;
+  }
+
   console.log('Seed en cours...');
 
   const docsDir = path.join(__dirname, '..', 'uploads', 'documents');
