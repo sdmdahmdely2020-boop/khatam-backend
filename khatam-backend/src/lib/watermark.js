@@ -8,10 +8,30 @@
 
 const { PDFDocument, rgb, degrees, StandardFonts } = require('pdf-lib');
 
+// La police standard Helvetica utilise l'encodage WinAnsi (essentiellement
+// Latin-1 + quelques symboles) : elle ne sait pas dessiner de caractères
+// arabes. Beaucoup d'utilisateurs mauritaniens saisissent leur nom en
+// écriture arabe (fullName vient directement du formulaire d'inscription) —
+// sans ce filtre, drawText() lève une exception et /view / /view-pages
+// renvoient une erreur 500 au lieu d'ouvrir le document. On remplace tout
+// caractère non représentable par "?" plutôt que de faire échouer tout le
+// filigrane : le numéro de téléphone (toujours composé de chiffres, donc
+// toujours représentable) reste lisible et suffit à lui seul à identifier le
+// compte de façon unique en cas de fuite.
+function safeForWinAnsi(font, text) {
+  try {
+    font.widthOfTextAtSize(text, 10);
+    return text;
+  } catch (e) {
+    return Array.from(text).map((ch) => (ch.codePointAt(0) <= 0x7e ? ch : '?')).join('');
+  }
+}
+
 async function watermarkPdf(sourceBytes, { label, timestamp }) {
   const pdfDoc = await PDFDocument.load(sourceBytes);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const tile = `${label} · ${timestamp}`;
+  const safeLabel = safeForWinAnsi(font, label);
+  const tile = `${safeLabel} · ${timestamp}`;
 
   const pages = pdfDoc.getPages();
   for (const page of pages) {

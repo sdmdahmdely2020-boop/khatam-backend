@@ -43,6 +43,24 @@ router.post('/:id/like', requireAuth({ roles: ['STUDENT'] }), (req, res) => {
   res.json({ liked: true, likes: likesCount(p.id) });
 });
 
+// GET /api/professors/me/ai-submissions — corrections IA réalisées sur les
+// documents du professeur connecté (élève, document, note, date). Remplace
+// l'ancienne donnée d'illustration figée côté frontend (PROF_AI_SUBMISSIONS)
+// par de vraies soumissions, désormais que de vrais professeurs/élèves
+// utilisent la plateforme.
+router.get('/me/ai-submissions', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
+  const rows = db.prepare(`
+    SELECT s.id, s.note, s.createdAt, d.title AS documentTitle, u.fullName AS studentName
+    FROM ai_submissions s
+    JOIN documents d ON d.id = s.documentId
+    JOIN users u ON u.id = s.studentId
+    WHERE d.professorId = ? AND s.status = 'graded'
+    ORDER BY s.createdAt DESC
+    LIMIT 200
+  `).all(req.user.id);
+  res.json({ submissions: rows });
+});
+
 // POST /api/professors/me/boost — active le mode Boost (payant) pour le
 // professeur connecté. Débite directement le solde du portefeuille pour
 // cette démo ; en production on ferait normalement passer ceci par le même

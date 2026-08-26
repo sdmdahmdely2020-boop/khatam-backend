@@ -9,12 +9,16 @@ const fs = require('fs');
 const db = require('../lib/db');
 const { newId } = require('../lib/id');
 const { requireAdminKey } = require('../middleware/auth');
+const { adminLimiter } = require('../middleware/rateLimit');
 const { confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments');
 const { getPaymentNumbers, setPaymentNumber } = require('../lib/settings');
 const { adUpload } = require('../lib/adUpload');
 const { deleteDocumentCascade, deleteUserCascade } = require('../lib/cascade');
 
 const router = express.Router();
+// adminLimiter avant requireAdminKey : on veut limiter le débit des essais de
+// clé eux-mêmes (brute-force), pas seulement les requêtes déjà authentifiées.
+router.use(adminLimiter);
 router.use(requireAdminKey);
 
 // GET /api/admin/settings — numéros Bankily/Masrivi/Sedad actuellement configurés.
@@ -132,10 +136,21 @@ router.patch('/ads/:id', (req, res) => {
   const ad = db.prepare('SELECT * FROM ads WHERE id = ?').get(req.params.id);
   if (!ad) return res.status(404).json({ error: 'NOT_FOUND' });
 
+  // better-sqlite3 ne peut pas binder un booléen JS natif (TypeError au
+  // .run()) — le client envoie `active: true/false` en JSON, il faut donc le
+  // convertir en 0/1 avant toute écriture, comme partout ailleurs (voir
+  // toBit() dans routes/documents.js).
   const fields = ['active', 'advertiserName', 'targetUrl', 'startDate', 'endDate'];
   const updates = {};
   for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
   if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'NO_FIELDS' });
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'active')) {
+    updates.active = updates.active === true || updates.active === 1 || updates.active === '1' ? 1 : 0;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'advertiserName') && !String(updates.advertiserName).trim()) {
+    return res.status(400).json({ error: 'INVALID_ADVERTISER_NAME', message: "advertiserName ne peut pas être vide." });
+  }
 
   const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
   db.prepare(`UPDATE ads SET ${setClause} WHERE id = @id`).run({ ...updates, id: ad.id });

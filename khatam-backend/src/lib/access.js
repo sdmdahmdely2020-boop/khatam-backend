@@ -6,8 +6,12 @@ const db = require('./db');
 // l'autorise).
 function hasAccess(userId, doc) {
   if (!doc) return false;
-  if (doc.free) return true;
+  // Le professeur propriétaire garde toujours accès à son propre document,
+  // même dépublié (brouillon) — tout le monde d'autre doit d'abord voir le
+  // document publié pour pouvoir y accéder, quel que soit le prix/free/pub.
   if (userId && doc.professorId === userId) return true;
+  if (doc.statut !== 'publie') return false;
+  if (doc.free) return true;
   if (!userId) return false;
 
   const purchase = db.prepare(

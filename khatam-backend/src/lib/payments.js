@@ -77,10 +77,22 @@ function confirmPurchase(purchaseId) {
     const err = new Error('Achat introuvable.'); err.status = 404; throw err;
   }
   if (purchase.status === 'confirmed') return purchase;
+  // Un achat déjà rejeté ne doit pas pouvoir être confirmé après coup sans
+  // repasser par une nouvelle tentative de paiement explicite.
+  if (purchase.status === 'failed') {
+    const err = new Error('Cet achat a déjà été refusé.'); err.status = 409; throw err;
+  }
 
-  db.prepare(`UPDATE purchases SET status = 'confirmed', confirmedAt = datetime('now') WHERE id = ?`).run(purchase.id);
-  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(purchase.documentId);
-  db.prepare('UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?').run(purchase.amount, doc.professorId);
+  // Transaction : le statut de l'achat et le crédit du portefeuille du
+  // professeur doivent changer ensemble, jamais l'un sans l'autre (sinon un
+  // crash entre les deux UPDATE laisserait un état incohérent avec de
+  // l'argent réel en jeu).
+  const tx = db.transaction(() => {
+    db.prepare(`UPDATE purchases SET status = 'confirmed', confirmedAt = datetime('now') WHERE id = ?`).run(purchase.id);
+    const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(purchase.documentId);
+    db.prepare('UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?').run(purchase.amount, doc.professorId);
+  });
+  tx();
   return db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id);
 }
 
@@ -88,6 +100,13 @@ function rejectPurchase(purchaseId) {
   const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchaseId);
   if (!purchase) {
     const err = new Error('Achat introuvable.'); err.status = 404; throw err;
+  }
+  // Garde essentielle : un achat déjà confirmé (portefeuille du professeur
+  // déjà crédité) ne doit jamais pouvoir être rebasculé à "failed" — sinon
+  // l'élève perd son accès alors que le professeur a déjà été payé, sans que
+  // personne ne s'en aperçoive. Voir confirmPurchase() pour le garde symétrique.
+  if (purchase.status === 'confirmed') {
+    const err = new Error('Cet achat est déjà confirmé et ne peut plus être refusé.'); err.status = 409; throw err;
   }
   db.prepare(`UPDATE purchases SET status = 'failed' WHERE id = ?`).run(purchase.id);
   return db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id);

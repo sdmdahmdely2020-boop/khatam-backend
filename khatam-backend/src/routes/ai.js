@@ -130,6 +130,15 @@ router.get('/ai/submissions/:id/file', requireAuth({ roles: ['STUDENT', 'PROFESS
   const filePath = path.join(SUBMISSION_DIR, row.answerFilePath);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'NOT_FOUND' });
 
+  // row.answerFileType vient du Content-Type déclaré par le client au moment
+  // de l'envoi (voir submissionUpload.js) — fileFilter le limite à
+  // image/jpeg|png|webp|application/pdf, mais rien ne garantit que les
+  // octets réels du fichier correspondent à ce type déclaré. X-Content-Type-
+  // Options: nosniff empêche le navigateur de deviner et exécuter un contenu
+  // différent (ex. HTML/JS) si ce fichier est ouvert directement dans un
+  // onglet par l'élève ou le professeur — même raisonnement que pour les
+  // dossiers /uploads/ads et /uploads/photos (voir app.js).
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Type', row.answerFileType || 'application/octet-stream');
   res.setHeader('Cache-Control', 'no-store');
   fs.createReadStream(filePath).pipe(res);

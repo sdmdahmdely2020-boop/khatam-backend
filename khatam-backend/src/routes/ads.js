@@ -45,13 +45,15 @@ router.get('/active', (req, res) => {
 
 // POST /api/ads/:id/impression — appelé côté client quand l'annonce est affichée.
 router.post('/:id/impression', (req, res) => {
-  db.prepare('UPDATE ads SET impressions = impressions + 1 WHERE id = ?').run(req.params.id);
+  const result = db.prepare('UPDATE ads SET impressions = impressions + 1 WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'NOT_FOUND' });
   res.json({ ok: true });
 });
 
 // POST /api/ads/:id/click — appelé côté client quand l'élève clique sur l'annonce.
 router.post('/:id/click', (req, res) => {
-  db.prepare('UPDATE ads SET clicks = clicks + 1 WHERE id = ?').run(req.params.id);
+  const result = db.prepare('UPDATE ads SET clicks = clicks + 1 WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'NOT_FOUND' });
   res.json({ ok: true });
 });
 

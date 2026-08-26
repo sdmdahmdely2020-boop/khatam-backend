@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../lib/db');
 const { newId } = require('../lib/id');
-const { requireAuth, requireAdminKey } = require('../middleware/auth');
+const { requireAuth, requireWebhookKey } = require('../middleware/auth');
 const { initiatePayment, verifyWebhookSignature, confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments');
 const { getPaymentNumbers } = require('../lib/settings');
 
@@ -80,14 +80,17 @@ router.get('/:id/status', requireAuth({ roles: ['STUDENT'] }), (req, res) => {
 // C'est l'URL qu'un vrai opérateur (Bankily/Masrivi/Sedad) appellerait en
 // production, une fois un contrat marchand signé, pour notifier automatiquement
 // la confirmation d'un paiement. Body attendu : { providerRef, status }.
-// Tant qu'aucun contrat n'existe, cette route est protégée par la même clé
-// que le panneau d'administration (X-Admin-Key) pour éviter qu'un élève ne
-// puisse s'auto-confirmer un achat gratuitement.
-router.post('/webhook/:provider', requireAdminKey, (req, res) => {
+// Tant qu'aucun contrat n'existe, cette route est protégée par une clé dédiée
+// (X-Webhook-Key, voir PAYMENTS_WEBHOOK_KEY) distincte de la clé complète du
+// panneau d'administration, pour limiter les dégâts si elle fuite un jour
+// vers un opérateur externe.
+router.post('/webhook/:provider', requireWebhookKey, (req, res) => {
   const { provider } = req.params;
   const { providerRef, status } = req.body || {};
   if (!PROVIDERS.includes(provider)) return res.status(400).json({ error: 'INVALID_PROVIDER' });
-  verifyWebhookSignature(provider, req);
+  if (!verifyWebhookSignature(provider, req)) {
+    return res.status(401).json({ error: 'INVALID_SIGNATURE', message: 'Signature de webhook invalide.' });
+  }
 
   const purchase = db.prepare('SELECT * FROM purchases WHERE providerRef = ?').get(providerRef);
   if (!purchase) return res.status(404).json({ error: 'PURCHASE_NOT_FOUND' });
