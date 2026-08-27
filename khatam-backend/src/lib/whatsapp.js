@@ -105,4 +105,52 @@ async function sendWhatsAppNotification(params = []) {
   }
 }
 
-module.exports = { whatsappConfigured, sendWhatsAppNotification };
+/**
+ * Envoie un message texte libre (pas un modèle) à un numéro quelconque —
+ * utilisé par le bot WhatsApp (voir lib/whatsappBot.js et
+ * routes/whatsapp.js) pour répondre à un élève/professeur qui vient
+ * d'écrire. Contrairement à sendWhatsAppNotification (qui envoie toujours
+ * un modèle pré-approuvé au SEUL numéro de sidi), l'API Meta autorise le
+ * texte libre vers N'IMPORTE QUEL numéro tant qu'on répond dans les 24h
+ * suivant son dernier message ("fenêtre de service client") — ce qui est
+ * toujours le cas ici puisqu'on répond directement à un message reçu par
+ * webhook. Même principe de repli que sendWhatsAppNotification : ne lève
+ * jamais d'exception, journalise et renvoie { sent: false } si le token/
+ * l'ID du numéro d'expéditeur ne sont pas configurés.
+ */
+async function sendWhatsAppFreeform(to, text) {
+  if (!(WHATSAPP_TOKEN && WHATSAPP_PHONE_NUMBER_ID)) {
+    console.log('[WhatsApp non configuré — mode de secours] Réponse du bot non envoyée à', to, ':', text);
+    return { sent: false, reason: 'NOT_CONFIGURED' };
+  }
+
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: String(to),
+          type: 'text',
+          text: { body: String(text).slice(0, 4096) },
+        }),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error('WhatsApp Cloud API (texte libre) — erreur :', JSON.stringify(data));
+      return { sent: false, reason: 'API_ERROR', detail: data };
+    }
+    return { sent: true };
+  } catch (e) {
+    console.error('WhatsApp Cloud API (texte libre) — exception :', e && e.message);
+    return { sent: false, reason: 'NETWORK_ERROR' };
+  }
+}
+
+module.exports = { whatsappConfigured, sendWhatsAppNotification, sendWhatsAppFreeform };

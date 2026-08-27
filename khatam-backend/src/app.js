@@ -16,6 +16,7 @@ const adsRoutes = require('./routes/ads');
 const feedbackRoutes = require('./routes/feedback');
 const contentRoutes = require('./routes/content');
 const ratingsRoutes = require('./routes/ratings');
+const whatsappRoutes = require('./routes/whatsapp');
 const { AD_IMAGES_DIR } = require('./lib/adUpload');
 const { PHOTO_DIR } = require('./lib/photoUpload');
 
@@ -84,6 +85,7 @@ app.use('/api/ads', adsRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/ratings', ratingsRoutes);
+app.use('/api/whatsapp', whatsappRoutes); // /api/whatsapp/webhook (GET vérification Meta + POST réception)
 
 // Gestion d'erreurs centralisée (ex: erreurs multer, exceptions non gérées dans les routes)
 app.use((err, req, res, next) => {

@@ -203,12 +203,30 @@ CREATE TABLE IF NOT EXISTS admin_messages (
   createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Journal des messages WhatsApp entrants/sortants du bot automatique branché
+-- sur le numéro WhatsApp Business de sidi (demande du 27/08 — voir
+-- routes/whatsapp.js et lib/whatsappBot.js). Un message entrant peut être
+-- "escaladé" (sujet délicat détecté ou bot non configuré) : dans ce cas
+-- aucune réponse automatique n'est envoyée, et sidi doit répondre lui-même
+-- directement depuis son téléphone — escalated sert seulement à l'afficher
+-- clairement dans admin.html, ce n'est pas bloquant côté WhatsApp lui-même.
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+  id           TEXT PRIMARY KEY,
+  fromNumber   TEXT NOT NULL,
+  direction    TEXT NOT NULL CHECK(direction IN ('in','out')),
+  body         TEXT NOT NULL,
+  escalated    INTEGER NOT NULL DEFAULT 0,
+  autoReplied  INTEGER NOT NULL DEFAULT 0,
+  createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_documents_filters ON documents(serie, matiere, annee, type);
 CREATE INDEX IF NOT EXISTS idx_documents_prof ON documents(professorId);
 CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(userId);
 CREATE INDEX IF NOT EXISTS idx_likes_prof ON likes(professorId);
 CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email);
 CREATE INDEX IF NOT EXISTS idx_admin_messages_prof ON admin_messages(professorId);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_from ON whatsapp_messages(fromNumber);
 `);
 
 // Migration légère : ajoute les colonnes introduites après la création initiale

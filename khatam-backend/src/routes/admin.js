@@ -435,4 +435,55 @@ router.patch('/content', (req, res) => {
   res.json({ faq: savedFaq, about: getSetting('about_text') || '' });
 });
 
+// --- Bot WhatsApp automatique — conversations et escalades ---
+//
+// Le bot lui-même (réception + réponse auto) vit dans routes/whatsapp.js ;
+// ici, sidi consulte depuis admin.html ce que le bot a échangé, et voit
+// clairement les conversations "escaladées" (sujet délicat détecté ou bot
+// non configuré) auxquelles il doit répondre lui-même, en direct sur son
+// téléphone — répondre depuis WhatsApp marque naturellement la conversation
+// comme prise en charge une fois qu'il clique "Marquer comme traité" ici.
+
+// GET /api/admin/whatsapp/conversations — une ligne par numéro, dernier
+// message + nombre de messages escaladés en attente, les plus récentes en premier.
+router.get('/whatsapp/conversations', (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      fromNumber,
+      MAX(createdAt) AS lastAt,
+      COUNT(*) AS total,
+      SUM(CASE WHEN escalated = 1 THEN 1 ELSE 0 END) AS escalatedCount,
+      (SELECT body FROM whatsapp_messages w2 WHERE w2.fromNumber = w1.fromNumber ORDER BY w2.createdAt DESC LIMIT 1) AS lastBody
+    FROM whatsapp_messages w1
+    GROUP BY fromNumber
+    ORDER BY lastAt DESC
+  `).all();
+  res.json({ conversations: rows });
+});
+
+// GET /api/admin/whatsapp/conversations/:number/messages — fil complet pour un numéro.
+router.get('/whatsapp/conversations/:number/messages', (req, res) => {
+  const rows = db.prepare(`
+    SELECT * FROM whatsapp_messages WHERE fromNumber = ? ORDER BY createdAt ASC
+  `).all(req.params.number);
+  res.json({ messages: rows });
+});
+
+// POST /api/admin/whatsapp/conversations/:number/resolve — sidi a répondu
+// lui-même depuis son téléphone : on lève les escalades en attente pour ce
+// numéro (n'efface aucun message, juste le statut "en attente").
+router.post('/whatsapp/conversations/:number/resolve', (req, res) => {
+  db.prepare(`UPDATE whatsapp_messages SET escalated = 0 WHERE fromNumber = ? AND escalated = 1`).run(req.params.number);
+  res.json({ ok: true });
+});
+
+// GET /api/admin/whatsapp/unread-count — nombre de numéros ayant au moins
+// une escalade en attente, pour un badge dans admin.html.
+router.get('/whatsapp/unread-count', (req, res) => {
+  const row = db.prepare(`
+    SELECT COUNT(DISTINCT fromNumber) AS n FROM whatsapp_messages WHERE escalated = 1
+  `).get();
+  res.json({ count: row.n });
+});
+
 module.exports = router;
