@@ -9,6 +9,7 @@ const { JWT_SECRET, requireAuth } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimit');
 const { photoUpload, PHOTO_DIR } = require('../lib/photoUpload');
 const { sendVerificationEmail, checkVerificationCode } = require('../lib/email');
+const { deleteUserCascade } = require('../lib/cascade');
 
 const router = express.Router();
 
@@ -263,6 +264,34 @@ router.delete('/me/photo', requireAuth(), (req, res) => {
   db.prepare('UPDATE users SET photoPath = NULL WHERE id = ?').run(req.user.id);
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: publicUser(updated) });
+});
+
+// DELETE /api/auth/me  { password }
+// Suppression définitive et en libre-service du compte de l'utilisateur
+// connecté (élève ou professeur) — demandée explicitement par sidi (27/08) :
+// chaque utilisateur doit pouvoir supprimer son propre compte. Redemande le
+// mot de passe pour confirmer (même logique que /device/release : une action
+// aussi destructive et irréversible mérite une confirmation explicite, le
+// jeton seul — qui peut avoir fuité ou être resté ouvert sur un appareil
+// partagé — ne suffit pas). Utilise deleteUserCascade (lib/cascade.js, déjà
+// utilisé par le panneau admin) pour supprimer aussi tout ce qui dépend du
+// compte : documents (et fichiers PDF/aperçus associés), achats, favoris,
+// likes, retraits, corrections IA (et copies envoyées), photo de profil.
+// Rien n'a besoin d'invalider le jeton JWT explicitement : requireAuth()
+// recharge l'utilisateur depuis la base à chaque requête (voir
+// middleware/auth.js), donc toute requête suivante avec ce jeton échoue déjà
+// naturellement avec 401 INVALID_TOKEN une fois le compte supprimé.
+router.delete('/me', authLimiter, requireAuth(), async (req, res) => {
+  const { password } = req.body || {};
+  if (!password) {
+    return res.status(400).json({ error: 'MISSING_FIELDS', message: 'Mot de passe requis pour confirmer la suppression du compte.' });
+  }
+  const full = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const ok = await bcrypt.compare(password, full.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Mot de passe incorrect.' });
+
+  deleteUserCascade(req.user.id);
+  res.json({ message: 'Compte supprimé définitivement.' });
 });
 
 module.exports = router;

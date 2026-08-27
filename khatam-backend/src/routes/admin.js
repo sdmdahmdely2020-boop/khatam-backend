@@ -276,4 +276,29 @@ router.post('/reset-demo-data', (req, res) => {
   res.json({ message: `${deleted.length} compte(s) de démonstration supprimé(s), avec leurs documents et données associées.`, deleted });
 });
 
+// POST /api/admin/reset-all-users  { confirm: "SUPPRIMER TOUT" }
+// Supprime absolument TOUS les comptes (élèves ET professeurs, démo ou réels)
+// et toutes leurs données (documents, achats, favoris, likes, retraits,
+// corrections IA, photos de profil) en une seule fois. Contrairement à
+// /reset-demo-data (qui ne cible que les numéros de démo connus), celui-ci
+// vide entièrement la table users, sans distinction. Pensé pour un lancement
+// propre avant l'arrivée des premiers vrais utilisateurs (demande de sidi,
+// 27/08) — n'importe qui pourra ensuite s'inscrire comme élève ou professeur
+// sur une base vide. Irréversible : protégé par une phrase de confirmation
+// explicite dans le corps de la requête, en plus de la clé ADMIN_KEY déjà
+// exigée par toutes les routes de ce fichier — pour éviter qu'un simple clic
+// accidentel ne déclenche une suppression catastrophique.
+router.post('/reset-all-users', (req, res) => {
+  const { confirm } = req.body || {};
+  if (confirm !== 'SUPPRIMER TOUT') {
+    return res.status(400).json({
+      error: 'CONFIRMATION_REQUISE',
+      message: 'Envoyez { "confirm": "SUPPRIMER TOUT" } dans le corps de la requête pour confirmer cette action irréversible.',
+    });
+  }
+  const users = db.prepare('SELECT id, fullName, role FROM users').all();
+  for (const u of users) deleteUserCascade(u.id);
+  res.json({ message: `${users.length} compte(s) supprimé(s) définitivement, avec toutes leurs données.`, count: users.length });
+});
+
 module.exports = router;
