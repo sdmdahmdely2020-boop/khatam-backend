@@ -1,9 +1,11 @@
 const express = require('express');
+const fs = require('fs');
 const db = require('../lib/db');
 const { newId } = require('../lib/id');
 const { requireAuth, requireWebhookKey } = require('../middleware/auth');
 const { initiatePayment, verifyWebhookSignature, confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments');
 const { getPaymentNumbers } = require('../lib/settings');
+const { receiptUpload } = require('../lib/receiptUpload');
 
 const router = express.Router();
 
@@ -66,6 +68,28 @@ router.post('/:id/submit-reference', requireAuth({ roles: ['STUDENT'] }), (req, 
   if (purchase.status !== 'pending') return res.status(400).json({ error: 'NOT_PENDING', message: 'Cet achat a déjà été traité.' });
 
   db.prepare('UPDATE purchases SET studentRef = ? WHERE id = ?').run(reference.trim(), purchase.id);
+  res.json({ purchase: db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id) });
+});
+
+// POST /api/payments/:id/receipt  (multipart, champ "receipt")
+// Envoi FACULTATIF d'une capture d'écran du reçu de paiement, en complément
+// du numéro de reçu (voir /submit-reference ci-dessus) — demandé par sidi
+// (27/08) comme appui visuel pour l'admin. Ce n'est PAS une vérification
+// automatique du paiement : une image peut être modifiée ou réutilisée, elle
+// aide simplement l'administrateur à confirmer visuellement en plus du
+// numéro de reçu (voir POST /api/admin/purchases/:id/confirm, toujours une
+// action manuelle). Remplace l'image précédente si l'élève réessaie.
+router.post('/:id/receipt', requireAuth({ roles: ['STUDENT'] }), receiptUpload.single('receipt'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'MISSING_FILE', message: 'Image de reçu requise (champ "receipt").' });
+
+  const purchase = db.prepare('SELECT * FROM purchases WHERE id = ? AND userId = ?').get(req.params.id, req.user.id);
+  if (!purchase) return res.status(404).json({ error: 'NOT_FOUND' });
+  if (purchase.status !== 'pending') return res.status(400).json({ error: 'NOT_PENDING', message: 'Cet achat a déjà été traité.' });
+
+  if (purchase.receiptImagePath) {
+    try { fs.unlinkSync(purchase.receiptImagePath); } catch (e) {}
+  }
+  db.prepare('UPDATE purchases SET receiptImagePath = ? WHERE id = ?').run(req.file.path, purchase.id);
   res.json({ purchase: db.prepare('SELECT * FROM purchases WHERE id = ?').get(purchase.id) });
 });
 

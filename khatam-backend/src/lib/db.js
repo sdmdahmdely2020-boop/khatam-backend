@@ -176,6 +176,10 @@ function ensureColumn(table, column, definition) {
   return false;
 }
 ensureColumn('purchases', 'studentRef', 'TEXT');
+// Capture d'écran de reçu (facultative, voir lib/receiptUpload.js) — appui
+// visuel pour l'admin en plus du numéro de reçu, jamais une vérification à
+// elle seule (une image peut être modifiée/réutilisée).
+ensureColumn('purchases', 'receiptImagePath', 'TEXT');
 ensureColumn('users', 'photoPath', 'TEXT');
 ensureColumn('ai_submissions', 'answerFilePath', 'TEXT');
 ensureColumn('ai_submissions', 'answerFileType', 'TEXT');

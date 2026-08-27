@@ -14,6 +14,7 @@ function deleteDocumentCascade(documentId) {
   if (!doc) return null;
 
   const submissions = db.prepare('SELECT answerFilePath FROM ai_submissions WHERE documentId = ? AND answerFilePath IS NOT NULL').all(documentId);
+  const receipts = db.prepare('SELECT receiptImagePath FROM purchases WHERE documentId = ? AND receiptImagePath IS NOT NULL').all(documentId);
 
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM purchases WHERE documentId = ?').run(documentId);
@@ -26,6 +27,7 @@ function deleteDocumentCascade(documentId) {
 
   if (doc.filePath) { try { fs.unlinkSync(doc.filePath); } catch (e) {} }
   if (doc.previewPath) { try { fs.unlinkSync(doc.previewPath); } catch (e) {} }
+  for (const r of receipts) { try { fs.unlinkSync(r.receiptImagePath); } catch (e) {} }
   if (submissions.length) {
     const { SUBMISSION_DIR } = require('./submissionUpload');
     const path = require('path');
@@ -46,6 +48,7 @@ function deleteUserCascade(userId) {
   for (const d of ownDocs) deleteDocumentCascade(d.id);
 
   const ownSubmissions = db.prepare('SELECT answerFilePath FROM ai_submissions WHERE studentId = ? AND answerFilePath IS NOT NULL').all(userId);
+  const ownReceipts = db.prepare('SELECT receiptImagePath FROM purchases WHERE userId = ? AND receiptImagePath IS NOT NULL').all(userId);
 
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM purchases WHERE userId = ?').run(userId);
@@ -62,6 +65,7 @@ function deleteUserCascade(userId) {
     const { PHOTO_DIR } = require('./photoUpload');
     try { fs.unlinkSync(require('path').join(PHOTO_DIR, user.photoPath)); } catch (e) {}
   }
+  for (const r of ownReceipts) { try { fs.unlinkSync(r.receiptImagePath); } catch (e) {} }
   if (ownSubmissions.length) {
     const { SUBMISSION_DIR } = require('./submissionUpload');
     const path = require('path');

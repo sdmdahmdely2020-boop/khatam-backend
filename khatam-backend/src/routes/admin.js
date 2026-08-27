@@ -41,6 +41,7 @@ router.patch('/settings', (req, res) => {
 router.get('/purchases/pending', (req, res) => {
   const rows = db.prepare(`
     SELECT pu.id, pu.amount, pu.method, pu.studentRef, pu.providerRef, pu.createdAt,
+           pu.receiptImagePath,
            d.title AS documentTitle,
            s.fullName AS studentName, s.phone AS studentPhone,
            p.fullName AS professorName
@@ -50,8 +51,21 @@ router.get('/purchases/pending', (req, res) => {
     JOIN users p ON p.id = d.professorId
     WHERE pu.status = 'pending'
     ORDER BY pu.createdAt ASC
-  `).all();
+  `).all().map((r) => ({ ...r, hasReceipt: !!r.receiptImagePath, receiptImagePath: undefined }));
   res.json({ purchases: rows });
+});
+
+// GET /api/admin/purchases/:id/receipt — sert l'image de la capture d'écran
+// envoyée par l'élève (voir routes/payments.js, POST /:id/receipt), pour que
+// l'admin puisse la regarder au moment de confirmer/rejeter. Ce n'est qu'un
+// appui visuel, jamais une preuve automatique (une image peut être modifiée
+// ou réutilisée) — la décision reste manuelle (confirm/reject ci-dessus).
+router.get('/purchases/:id/receipt', (req, res) => {
+  const purchase = db.prepare('SELECT receiptImagePath FROM purchases WHERE id = ?').get(req.params.id);
+  if (!purchase || !purchase.receiptImagePath) return res.status(404).json({ error: 'NOT_FOUND' });
+  if (!fs.existsSync(purchase.receiptImagePath)) return res.status(404).json({ error: 'NOT_FOUND' });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.sendFile(purchase.receiptImagePath);
 });
 
 // POST /api/admin/purchases/:id/confirm — l'argent est bien arrivé, on débloque et on crédite le professeur.
