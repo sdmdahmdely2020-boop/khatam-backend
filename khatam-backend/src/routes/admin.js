@@ -292,11 +292,23 @@ router.delete('/documents/:id', (req, res) => {
 // achats/etc. Ne touche à aucun vrai compte créé par un vrai utilisateur. Irréversible.
 router.post('/reset-demo-data', (req, res) => {
   const deleted = [];
+  const failed = [];
   for (const phone of SEED_PHONES) {
     const u = db.prepare('SELECT id, fullName FROM users WHERE phone = ?').get(phone);
-    if (u) { deleteUserCascade(u.id); deleted.push(u.fullName); }
+    if (!u) continue;
+    // Un compte à la fois, chacun dans son propre try/catch : si l'un
+    // échoue (ex. une table oubliée dans deleteUserCascade — bug vécu le
+    // 27/08 avec feedback/app_ratings/admin_messages, désormais corrigé),
+    // les autres comptes de la liste continuent d'être supprimés au lieu de
+    // stopper toute la boucle sur une erreur 500 opaque.
+    try { deleteUserCascade(u.id); deleted.push(u.fullName); }
+    catch (e) { console.error('reset-demo-data — échec suppression', u.fullName, e && e.message); failed.push(u.fullName); }
   }
-  res.json({ message: `${deleted.length} compte(s) de démonstration supprimé(s), avec leurs documents et données associées.`, deleted });
+  res.json({
+    message: `${deleted.length} compte(s) de démonstration supprimé(s), avec leurs documents et données associées.`
+      + (failed.length ? ` ATTENTION : ${failed.length} compte(s) n'ont pas pu être supprimés (voir les logs serveur).` : ''),
+    deleted, failed,
+  });
 });
 
 // POST /api/admin/reset-all-users  { confirm: "SUPPRIMER TOUT" }
@@ -320,8 +332,19 @@ router.post('/reset-all-users', (req, res) => {
     });
   }
   const users = db.prepare('SELECT id, fullName, role FROM users').all();
-  for (const u of users) deleteUserCascade(u.id);
-  res.json({ message: `${users.length} compte(s) supprimé(s) définitivement, avec toutes leurs données.`, count: users.length });
+  const deleted = [];
+  const failed = [];
+  // Même principe que reset-demo-data ci-dessus : un échec sur UN compte ne
+  // doit plus jamais interrompre la suppression des autres (bug du 27/08).
+  for (const u of users) {
+    try { deleteUserCascade(u.id); deleted.push(u.fullName); }
+    catch (e) { console.error('reset-all-users — échec suppression', u.fullName, e && e.message); failed.push(u.fullName); }
+  }
+  res.json({
+    message: `${deleted.length} compte(s) supprimé(s) définitivement, avec toutes leurs données.`
+      + (failed.length ? ` ATTENTION : ${failed.length} compte(s) n'ont pas pu être supprimés (voir les logs serveur).` : ''),
+    count: deleted.length, failed,
+  });
 });
 
 // --- Retours des utilisateurs ("feedback") ---

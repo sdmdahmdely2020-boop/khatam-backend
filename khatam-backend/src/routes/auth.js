@@ -15,6 +15,27 @@ const router = express.Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// EMAIL_RE seule laissait passer des adresses invalides comme
+// "nom@.gmail.com" (point juste après le "@") : les deux groupes
+// [^\s@]+ peuvent se répartir n'importe où autour du point littéral, donc
+// un domaine commençant par un point matchait quand même. Bug découvert le
+// 27/08 en production : plusieurs élèves ont tapé cette faute de frappe
+// (fréquente au clavier mobile), Gmail refusait ensuite l'envoi (voir
+// lib/email.js), et le compte restait bloqué en "fantôme" (voir plus bas).
+// isValidEmail() ajoute les vérifications qu'un simple pattern regex gère
+// mal : pas de point en tout début/fin de la partie locale OU du domaine,
+// pas de points consécutifs.
+function isValidEmail(raw) {
+  const email = String(raw || '').trim();
+  if (!EMAIL_RE.test(email)) return false;
+  const atIndex = email.lastIndexOf('@');
+  const local = email.slice(0, atIndex);
+  const domain = email.slice(atIndex + 1);
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) return false;
+  return true;
+}
+
 function signToken(user) {
   return jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
 }
@@ -63,7 +84,7 @@ router.post('/signup', authLimiter, async (req, res) => {
   if (!fullName || !phone || !password || !email) {
     return res.status(400).json({ error: 'MISSING_FIELDS', message: 'Nom complet, téléphone, email et mot de passe requis.' });
   }
-  if (!EMAIL_RE.test(String(email).trim())) {
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'INVALID_EMAIL', message: 'Adresse email invalide.' });
   }
   if (password.length < 6) {
@@ -110,8 +131,15 @@ router.post('/signup', authLimiter, async (req, res) => {
   try {
     await sendVerificationEmail(String(email).trim());
   } catch (e) {
-    // Le compte est créé mais pas encore vérifiable par email — on prévient
-    // clairement plutôt que de laisser un compte fantôme sans explication.
+    // L'envoi a échoué (adresse rejetée par Gmail, ou panne passagère) — on
+    // SUPPRIME immédiatement le compte qu'on venait de créer plutôt que de
+    // le laisser en "fantôme" (bug découvert le 27/08 : un compte non
+    // vérifiable bloquait pour toujours le téléphone ET l'email utilisés,
+    // empêchant la personne de recommencer même après avoir corrigé sa
+    // faute de frappe — jusqu'ici il fallait une suppression manuelle par
+    // l'admin). Comme personne n'a encore rien pu faire avec ce compte
+    // (email jamais vérifié), le supprimer immédiatement est sans risque.
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
     return res.status(e.status || 502).json({ error: e.code || 'EMAIL_SEND_FAILED', message: e.message });
   }
 
@@ -179,7 +207,7 @@ router.post('/resend-code', authLimiter, async (req, res) => {
 // attente pour la même adresse.
 router.post('/forgot-password', authLimiter, async (req, res) => {
   const { email } = req.body || {};
-  if (!email || !EMAIL_RE.test(String(email).trim())) {
+  if (!email || !isValidEmail(email)) {
     return res.status(400).json({ error: 'INVALID_EMAIL', message: 'Adresse email valide requise.' });
   }
   const user = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).trim());

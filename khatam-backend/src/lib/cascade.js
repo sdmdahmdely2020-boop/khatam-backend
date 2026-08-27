@@ -57,6 +57,25 @@ function deleteUserCascade(userId) {
     db.prepare('DELETE FROM likes WHERE studentId = ? OR professorId = ?').run(userId, userId);
     db.prepare('DELETE FROM withdrawals WHERE professorId = ?').run(userId);
     db.prepare('DELETE FROM ai_submissions WHERE studentId = ?').run(userId);
+    // Trois tables ajoutées après la première version de cette fonction
+    // (feedback, note de l'app, messagerie admin<->professeur — toutes
+    // introduites le 27/08) référencent aussi users(id) mais n'étaient PAS
+    // nettoyées ici. Bug découvert le 27/08 en production : dès qu'un compte
+    // avait laissé un avis (app_ratings), un message de feedback, ou (pour
+    // un professeur) échangé un message avec l'admin, la contrainte FOREIGN
+    // KEY (foreign_keys = ON, voir db.js) faisait échouer tout le bloc
+    // db.transaction() ci-dessus — better-sqlite3 annule alors TOUTE la
+    // transaction (rollback complet, y compris les DELETE déjà exécutés
+    // au-dessus) et relance l'erreur. Le compte n'était donc jamais
+    // supprimé, ni ici ni via /admin/reset-all-users (qui appelle cette même
+    // fonction en boucle, un utilisateur à la fois) — d'où le comportement
+    // signalé par sidi : "parfois ça marche, parfois non" (ça marchait pour
+    // les comptes n'ayant jamais laissé d'avis/feedback/message, et échouait
+    // silencieusement pour les autres, avec une erreur 500 que l'admin ne
+    // remarquait pas forcément).
+    db.prepare('DELETE FROM feedback WHERE userId = ?').run(userId);
+    db.prepare('DELETE FROM app_ratings WHERE userId = ?').run(userId);
+    db.prepare('DELETE FROM admin_messages WHERE professorId = ?').run(userId);
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
   });
   tx();

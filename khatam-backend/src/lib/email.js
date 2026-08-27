@@ -123,6 +123,29 @@ async function sendVerificationEmail(email, purpose = 'signup') {
     });
   } catch (e) {
     console.error('Gmail SMTP erreur:', e && e.message);
+    // Gmail peut carrément REJETER l'adresse (format invalide, domaine
+    // inexistant...) plutôt que de juste échouer temporairement — cas vu en
+    // production le 27/08 : des élèves tapent "nom@.gmail.com" (point juste
+    // après le "@", faute de frappe fréquente au clavier mobile), ce que
+    // l'ancienne regex de validation laissait passer côté serveur, mais que
+    // Gmail refuse ensuite au moment de l'envoi réel (erreur SMTP 550-559,
+    // "recipient rejected"). C'est une erreur PERMANENTE côté utilisateur
+    // (son adresse est mal orthographiée), pas un problème passager côté
+    // serveur — on le distingue explicitement pour ne jamais répondre
+    // "réessayez dans un instant" dans ce cas précis, ce qui laisserait
+    // croire à tort que refaire exactement la même tentative plus tard va
+    // finir par marcher (jamais le cas tant que l'adresse n'est pas corrigée).
+    const looksInvalidRecipient = !!(e && (
+      e.code === 'EENVELOPE' ||
+      (e.responseCode && e.responseCode >= 550 && e.responseCode < 560) ||
+      /rejected|not a valid/i.test(e.message || '')
+    ));
+    if (looksInvalidRecipient) {
+      const err = new Error("Cette adresse email semble invalide (vérifiez surtout l'orthographe juste après le « @ »). Corrigez-la puis réessayez.");
+      err.code = 'INVALID_EMAIL_ADDRESS';
+      err.status = 400;
+      throw err;
+    }
     const err = new Error("Impossible d'envoyer l'email pour le moment. Réessayez dans un instant.");
     err.code = 'EMAIL_SEND_FAILED';
     err.status = 502;
