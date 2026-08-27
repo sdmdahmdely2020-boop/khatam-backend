@@ -11,7 +11,7 @@ const { newId } = require('../lib/id');
 const { requireAdminKey } = require('../middleware/auth');
 const { adminLimiter } = require('../middleware/rateLimit');
 const { confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments');
-const { getPaymentNumbers, setPaymentNumber } = require('../lib/settings');
+const { getPaymentNumbers, setPaymentNumber, getSetting, setSetting } = require('../lib/settings');
 const { adUpload } = require('../lib/adUpload');
 const { deleteDocumentCascade, deleteUserCascade } = require('../lib/cascade');
 
@@ -160,9 +160,10 @@ router.get('/ads', (req, res) => {
 });
 
 // POST /api/admin/ads — multipart/form-data : advertiserName, targetUrl, placement,
-// startDate?, endDate?, image (fichier).
+// zone? (catalog|dashboard, uniquement pertinent pour placement="banner" — voir
+// GET /api/ads/list, routes/ads.js), startDate?, endDate?, image (fichier).
 router.post('/ads', adUpload.single('image'), (req, res) => {
-  const { advertiserName, targetUrl, placement, startDate, endDate } = req.body || {};
+  const { advertiserName, targetUrl, placement, zone, startDate, endDate } = req.body || {};
   if (!advertiserName || !placement) {
     if (req.file) fs.unlinkSync(req.file.path);
     return res.status(400).json({ error: 'MISSING_FIELDS', message: 'advertiserName et placement sont requis.' });
@@ -171,22 +172,27 @@ router.post('/ads', adUpload.single('image'), (req, res) => {
     if (req.file) fs.unlinkSync(req.file.path);
     return res.status(400).json({ error: 'INVALID_PLACEMENT' });
   }
+  if (zone !== undefined && !['catalog', 'dashboard'].includes(zone)) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'INVALID_ZONE', message: "zone doit être 'catalog' ou 'dashboard'." });
+  }
   const id = newId('ad');
   db.prepare(`
-    INSERT INTO ads (id, advertiserName, imagePath, targetUrl, placement, startDate, endDate)
-    VALUES (@id, @advertiserName, @imagePath, @targetUrl, @placement, @startDate, @endDate)
+    INSERT INTO ads (id, advertiserName, imagePath, targetUrl, placement, zone, startDate, endDate)
+    VALUES (@id, @advertiserName, @imagePath, @targetUrl, @placement, @zone, @startDate, @endDate)
   `).run({
     id, advertiserName,
     imagePath: req.file ? req.file.filename : null,
     targetUrl: targetUrl || null,
     placement,
+    zone: zone || 'catalog',
     startDate: startDate || null,
     endDate: endDate || null,
   });
   res.status(201).json({ ad: db.prepare('SELECT * FROM ads WHERE id = ?').get(id) });
 });
 
-// PATCH /api/admin/ads/:id — { active?, advertiserName?, targetUrl?, startDate?, endDate? }
+// PATCH /api/admin/ads/:id — { active?, advertiserName?, targetUrl?, zone?, startDate?, endDate? }
 router.patch('/ads/:id', (req, res) => {
   const ad = db.prepare('SELECT * FROM ads WHERE id = ?').get(req.params.id);
   if (!ad) return res.status(404).json({ error: 'NOT_FOUND' });
@@ -195,7 +201,7 @@ router.patch('/ads/:id', (req, res) => {
   // .run()) — le client envoie `active: true/false` en JSON, il faut donc le
   // convertir en 0/1 avant toute écriture, comme partout ailleurs (voir
   // toBit() dans routes/documents.js).
-  const fields = ['active', 'advertiserName', 'targetUrl', 'startDate', 'endDate'];
+  const fields = ['active', 'advertiserName', 'targetUrl', 'zone', 'startDate', 'endDate'];
   const updates = {};
   for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
   if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'NO_FIELDS' });
@@ -205,6 +211,9 @@ router.patch('/ads/:id', (req, res) => {
   }
   if (Object.prototype.hasOwnProperty.call(updates, 'advertiserName') && !String(updates.advertiserName).trim()) {
     return res.status(400).json({ error: 'INVALID_ADVERTISER_NAME', message: "advertiserName ne peut pas être vide." });
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'zone') && !['catalog', 'dashboard'].includes(updates.zone)) {
+    return res.status(400).json({ error: 'INVALID_ZONE', message: "zone doit être 'catalog' ou 'dashboard'." });
   }
 
   const setClause = Object.keys(updates).map((k) => `${k} = @${k}`).join(', ');
@@ -313,6 +322,117 @@ router.post('/reset-all-users', (req, res) => {
   const users = db.prepare('SELECT id, fullName, role FROM users').all();
   for (const u of users) deleteUserCascade(u.id);
   res.json({ message: `${users.length} compte(s) supprimé(s) définitivement, avec toutes leurs données.`, count: users.length });
+});
+
+// --- Retours des utilisateurs ("feedback") ---
+//
+// Formulaire public, voir routes/feedback.js. Enregistré ici quel que soit le
+// succès de la notification WhatsApp (voir lib/whatsapp.js) — whatsappSent
+// indique juste si l'alerte est aussi partie sur WhatsApp, ce panneau reste
+// la source de vérité en cas d'échec/absence de configuration WhatsApp.
+
+// GET /api/admin/feedback — les 200 derniers retours, les plus récents en premier.
+router.get('/feedback', (req, res) => {
+  const rows = db.prepare(`
+    SELECT f.id, f.name, f.contact, f.message, f.whatsappSent, f.createdAt,
+           u.fullName AS userFullName, u.role AS userRole
+    FROM feedback f
+    LEFT JOIN users u ON u.id = f.userId
+    ORDER BY f.createdAt DESC
+    LIMIT 200
+  `).all();
+  res.json({ feedback: rows });
+});
+
+// --- Note de l'application (étoiles) ---
+//
+// Un avis par utilisateur (voir routes/ratings.js) — visible uniquement ici,
+// jamais publiquement sur le site.
+
+// GET /api/admin/ratings — tous les avis + la moyenne.
+router.get('/ratings', (req, res) => {
+  const rows = db.prepare(`
+    SELECT r.id, r.stars, r.comment, r.role, r.createdAt, u.fullName AS userFullName
+    FROM app_ratings r
+    JOIN users u ON u.id = r.userId
+    ORDER BY r.createdAt DESC
+  `).all();
+  const avgRow = db.prepare('SELECT AVG(stars) AS avg, COUNT(*) AS count FROM app_ratings').get();
+  res.json({ ratings: rows, average: avgRow.avg, count: avgRow.count });
+});
+
+// --- Messagerie admin ↔ professeur ---
+//
+// Un seul fil par professeur (voir lib/db.js, table admin_messages). Envoyer
+// un message ici le marque automatiquement "lu côté admin" (on vient de
+// l'écrire) et "non lu côté professeur" — l'inverse de GET, qui marque les
+// messages du professeur comme lus par l'admin au moment de la consultation.
+
+// GET /api/admin/professors/:id/messages — tout le fil pour ce professeur ;
+// marque les messages envoyés PAR le professeur comme lus par l'admin.
+router.get('/professors/:id/messages', (req, res) => {
+  const prof = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'PROFESSOR'`).get(req.params.id);
+  if (!prof) return res.status(404).json({ error: 'NOT_FOUND' });
+  const rows = db.prepare(`SELECT * FROM admin_messages WHERE professorId = ? ORDER BY createdAt ASC`).all(prof.id);
+  db.prepare(`UPDATE admin_messages SET readByAdmin = 1 WHERE professorId = ? AND sender = 'professor'`).run(prof.id);
+  res.json({ messages: rows });
+});
+
+// POST /api/admin/professors/:id/messages  { body }
+router.post('/professors/:id/messages', (req, res) => {
+  const prof = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'PROFESSOR'`).get(req.params.id);
+  if (!prof) return res.status(404).json({ error: 'NOT_FOUND' });
+  const { body } = req.body || {};
+  if (!body || !String(body).trim()) {
+    return res.status(400).json({ error: 'MISSING_FIELDS', message: 'Message requis.' });
+  }
+  const id = newId('msg');
+  db.prepare(`
+    INSERT INTO admin_messages (id, professorId, sender, body, readByAdmin, readByProfessor)
+    VALUES (?, ?, 'admin', ?, 1, 0)
+  `).run(id, prof.id, String(body).trim().slice(0, 2000));
+  res.status(201).json({ message: db.prepare('SELECT * FROM admin_messages WHERE id = ?').get(id) });
+});
+
+// GET /api/admin/professors/unread-messages-count — nombre de professeurs
+// ayant au moins un message non lu par l'admin, pour un badge dans admin.html.
+router.get('/professors/unread-messages-count', (req, res) => {
+  const row = db.prepare(`
+    SELECT COUNT(DISTINCT professorId) AS n FROM admin_messages WHERE sender = 'professor' AND readByAdmin = 0
+  `).get();
+  res.json({ count: row.n });
+});
+
+// --- Contenu FAQ / À propos (éditable sans redéploiement) ---
+//
+// Réutilise platform_settings (déjà utilisée pour les numéros Bankily/
+// Masrivi/Sedad, voir lib/settings.js) — FAQ stockée en JSON (tableau de
+// {question, reponse}), À propos en texte simple.
+
+// GET /api/admin/content — contenu FAQ + À propos actuellement configurés.
+router.get('/content', (req, res) => {
+  const faqRaw = getSetting('faq_json');
+  let faq = [];
+  try { faq = faqRaw ? JSON.parse(faqRaw) : []; } catch (e) { faq = []; }
+  res.json({ faq, about: getSetting('about_text') || '' });
+});
+
+// PATCH /api/admin/content  { faq?: [{question, reponse}], about?: string }
+router.patch('/content', (req, res) => {
+  const { faq, about } = req.body || {};
+  if (faq !== undefined) {
+    if (!Array.isArray(faq) || !faq.every((f) => f && typeof f.question === 'string' && typeof f.reponse === 'string')) {
+      return res.status(400).json({ error: 'INVALID_FAQ', message: 'faq doit être un tableau de { question, reponse }.' });
+    }
+    setSetting('faq_json', JSON.stringify(faq));
+  }
+  if (about !== undefined) {
+    setSetting('about_text', String(about));
+  }
+  const faqRaw = getSetting('faq_json');
+  let savedFaq = [];
+  try { savedFaq = faqRaw ? JSON.parse(faqRaw) : []; } catch (e) { savedFaq = []; }
+  res.json({ faq: savedFaq, about: getSetting('about_text') || '' });
 });
 
 module.exports = router;

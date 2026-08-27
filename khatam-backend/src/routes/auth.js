@@ -169,6 +169,59 @@ router.post('/resend-code', authLimiter, async (req, res) => {
   res.json({ sent: true });
 });
 
+// POST /api/auth/forgot-password  { email }
+// Envoie un code de réinitialisation par email si un compte existe pour cette
+// adresse — répond TOUJOURS { sent: true } même si aucun compte ne correspond
+// (pour ne jamais laisser un visiteur deviner quelles adresses sont
+// inscrites, comme le fait déjà PHONE_TAKEN/EMAIL_TAKEN à l'inscription ne
+// le permet pas ici puisque cette route est publique et anonyme). purpose
+// 'reset' (voir lib/email.js) — indépendant de tout code d'inscription en
+// attente pour la même adresse.
+router.post('/forgot-password', authLimiter, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !EMAIL_RE.test(String(email).trim())) {
+    return res.status(400).json({ error: 'INVALID_EMAIL', message: 'Adresse email valide requise.' });
+  }
+  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).trim());
+  if (user) {
+    try {
+      await sendVerificationEmail(String(email).trim(), 'reset');
+    } catch (e) {
+      // On ne révèle jamais si l'email existe ou non via le statut d'erreur —
+      // mais un vrai échec d'envoi (Gmail down) reste signalé pour ne pas
+      // laisser croire à tort qu'un code est parti.
+      return res.status(e.status || 502).json({ error: e.code || 'EMAIL_SEND_FAILED', message: e.message });
+    }
+  }
+  res.json({ sent: true, message: 'Si un compte existe avec cet email, un code de réinitialisation vient de lui être envoyé.' });
+});
+
+// POST /api/auth/reset-password  { email, code, newPassword }
+// Vérifie le code de réinitialisation puis change le mot de passe. Ne lie ni
+// ne délie aucun appareil, et n'invalide pas les jetons JWT déjà émis (comme
+// pour DELETE /me, requireAuth() recharge l'utilisateur à chaque requête —
+// mais changer le mot de passe ne rend pas un jeton existant invalide pour
+// autant, ce n'est pas un souci ici : la personne qui vient de prouver
+// qu'elle contrôle l'email du compte a de toute façon un accès légitime).
+router.post('/reset-password', authLimiter, async (req, res) => {
+  const { email, code, newPassword } = req.body || {};
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: 'MISSING_FIELDS', message: 'Email, code et nouveau mot de passe requis.' });
+  }
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ error: 'WEAK_PASSWORD', message: 'Mot de passe trop court (6 caractères minimum).' });
+  }
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).trim());
+  if (!user) return res.status(400).json({ error: 'INVALID_CODE', message: 'Code invalide ou expiré.' });
+
+  const ok = checkVerificationCode(String(email).trim(), code, 'reset');
+  if (!ok) return res.status(400).json({ error: 'INVALID_CODE', message: 'Code invalide ou expiré.' });
+
+  const passwordHash = await bcrypt.hash(String(newPassword), 10);
+  db.prepare('UPDATE users SET passwordHash = ? WHERE id = ?').run(passwordHash, user.id);
+  res.json({ message: 'Mot de passe réinitialisé. Vous pouvez maintenant vous connecter.' });
+});
+
 // POST /api/auth/login
 // body: { phone, password, deviceId, deviceLabel }
 // Si le compte n'a encore aucun appareil lié -> on lie cet appareil (premher login).

@@ -14,9 +14,47 @@ const db = require('../lib/db');
 
 const router = express.Router();
 
+// GET /api/ads/list?placement=banner&zone=catalog|dashboard
+// Renvoie TOUTES les annonces actives (pas une seule au hasard) pour cette
+// combinaison placement/zone, afin que le frontend en fasse un vrai carrousel
+// qui change automatiquement toutes les quelques secondes (demande de sidi,
+// 27/08 : "des ads qui sont déplacé change au cours du temps") — sans zone,
+// suppose 'catalog' (comportement historique du bandeau public). ad-gate
+// n'utilise pas de zone (un seul emplacement, pendant le déblocage par pub).
+router.get('/list', (req, res) => {
+  const { placement } = req.query;
+  const zone = req.query.zone || 'catalog';
+  if (!placement || !['banner', 'ad-gate'].includes(placement)) {
+    return res.status(400).json({ error: 'INVALID_PLACEMENT' });
+  }
+  if (!['catalog', 'dashboard'].includes(zone)) {
+    return res.status(400).json({ error: 'INVALID_ZONE' });
+  }
+  const now = new Date().toISOString().slice(0, 10);
+  const rows = db.prepare(`
+    SELECT * FROM ads
+    WHERE placement = ? AND active = 1 AND zone = ?
+      AND (startDate IS NULL OR startDate <= ?)
+      AND (endDate IS NULL OR endDate >= ?)
+    ORDER BY createdAt ASC
+  `).all(placement, zone, now, now);
+
+  res.json({
+    ads: rows.map((ad) => ({
+      id: ad.id,
+      advertiserName: ad.advertiserName,
+      imageUrl: ad.imagePath ? `/uploads/ads/${ad.imagePath}` : null,
+      targetUrl: ad.targetUrl,
+      placement: ad.placement,
+      zone: ad.zone,
+    })),
+  });
+});
+
 // GET /api/ads/active?placement=banner|ad-gate
-// Renvoie les annonces actives (active=1, dans leur fenêtre de dates si définie),
-// une au hasard si plusieurs existent pour le même emplacement (rotation simple).
+// Renvoie UNE annonce active au hasard (route historique, conservée pour
+// compatibilité — voir /list ci-dessus pour un vrai carrousel de plusieurs
+// annonces). Suppose zone='catalog'.
 router.get('/active', (req, res) => {
   const { placement } = req.query;
   if (!placement || !['banner', 'ad-gate'].includes(placement)) {

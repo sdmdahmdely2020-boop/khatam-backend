@@ -70,37 +70,60 @@ function getTransporter() {
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_ATTEMPTS = 5;
 
+// Sujets/textes différents selon le "purpose" du code — 'signup' (historique,
+// inscription) ou 'reset' (mot de passe oublié, voir routes/auth.js POST
+// /forgot-password, ajouté le 27/08). Le code lui-même est généré/stocké/
+// vérifié exactement de la même façon dans les deux cas (table email_codes),
+// seul le texte de l'email change pour que l'utilisateur comprenne pourquoi
+// il l'a reçu.
+const PURPOSE_TEXT = {
+  signup: {
+    subject: 'Votre code de vérification Khatam',
+    intro: 'Voici votre code de vérification Khatam :',
+  },
+  reset: {
+    subject: 'Réinitialisation de votre mot de passe Khatam',
+    intro: 'Voici votre code pour réinitialiser votre mot de passe Khatam :',
+  },
+};
+
 /**
- * Génère un code, le stocke localement, et l'envoie réellement par email via
- * Gmail (SMTP) si configuré (sinon le journalise seulement — voir en-tête).
+ * Génère un code, le stocke localement (associé à `purpose`), et l'envoie
+ * réellement par email via Gmail (SMTP) si configuré (sinon le journalise
+ * seulement — voir en-tête). `purpose` vaut 'signup' (par défaut, inscription)
+ * ou 'reset' (mot de passe oublié) — un nouveau code pour un purpose donné
+ * remplace tout code précédent pour CE MÊME purpose et cette même adresse
+ * (un code d'inscription en attente n'est donc jamais invalidé par une
+ * demande de réinitialisation de mot de passe, et inversement).
  */
-async function sendVerificationEmail(email) {
+async function sendVerificationEmail(email, purpose = 'signup') {
   const code = String(Math.floor(100000 + Math.random() * 900000));
   const id = newId('emc');
   const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-  db.prepare('DELETE FROM email_codes WHERE email = ?').run(email);
-  db.prepare('INSERT INTO email_codes (id, email, code, expiresAt) VALUES (?, ?, ?, ?)').run(id, email, code, expiresAt);
+  db.prepare('DELETE FROM email_codes WHERE email = ? AND purpose = ?').run(email, purpose);
+  db.prepare('INSERT INTO email_codes (id, email, code, expiresAt, purpose) VALUES (?, ?, ?, ?, ?)').run(id, email, code, expiresAt, purpose);
 
   if (!emailConfigured()) {
-    console.log(`[Email non configuré — mode de secours] Code de vérification pour ${email} : ${code} (valable 10 min)`);
+    console.log(`[Email non configuré — mode de secours] Code (${purpose}) pour ${email} : ${code} (valable 10 min)`);
     return { mode: 'fallback' };
   }
 
+  const text = PURPOSE_TEXT[purpose] || PURPOSE_TEXT.signup;
   try {
     await getTransporter().sendMail({
       from: `"${EMAIL_FROM_NAME}" <${GMAIL_USER}>`,
       to: email,
-      subject: 'Votre code de vérification Khatam',
+      subject: text.subject,
       html: `
         <div style="font-family:sans-serif;font-size:15px;color:#1E2A26;">
-          <p>Voici votre code de vérification Khatam :</p>
+          <p>${text.intro}</p>
           <p style="font-size:28px;font-weight:700;letter-spacing:4px;">${code}</p>
           <p style="color:#5B655B;font-size:13px;">Ce code est valable 10 minutes. Si vous n'avez pas demandé ce code, ignorez cet email.</p>
         </div>`,
     });
   } catch (e) {
     console.error('Gmail SMTP erreur:', e && e.message);
-    const err = new Error("Impossible d'envoyer l'email de vérification pour le moment. Réessayez dans un instant.");
+    const err = new Error("Impossible d'envoyer l'email pour le moment. Réessayez dans un instant.");
     err.code = 'EMAIL_SEND_FAILED';
     err.status = 502;
     throw err;
@@ -109,23 +132,24 @@ async function sendVerificationEmail(email) {
 }
 
 /**
- * Vérifie un code saisi par l'utilisateur. Renvoie true/false. Toujours
- * local (voir en-tête) — indépendant de la configuration Gmail.
+ * Vérifie un code saisi par l'utilisateur pour un `purpose` donné. Renvoie
+ * true/false. Toujours local (voir en-tête) — indépendant de la
+ * configuration Gmail.
  */
-function checkVerificationCode(email, code) {
-  const row = db.prepare('SELECT * FROM email_codes WHERE email = ?').get(email);
+function checkVerificationCode(email, code, purpose = 'signup') {
+  const row = db.prepare('SELECT * FROM email_codes WHERE email = ? AND purpose = ?').get(email, purpose);
   if (!row) return false;
   if (new Date(row.expiresAt) < new Date()) {
-    db.prepare('DELETE FROM email_codes WHERE email = ?').run(email);
+    db.prepare('DELETE FROM email_codes WHERE id = ?').run(row.id);
     return false;
   }
   if (row.attempts >= MAX_ATTEMPTS) {
-    db.prepare('DELETE FROM email_codes WHERE email = ?').run(email);
+    db.prepare('DELETE FROM email_codes WHERE id = ?').run(row.id);
     return false;
   }
   db.prepare('UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?').run(row.id);
   if (String(code || '') !== row.code) return false;
-  db.prepare('DELETE FROM email_codes WHERE email = ?').run(email);
+  db.prepare('DELETE FROM email_codes WHERE id = ?').run(row.id);
   return true;
 }
 

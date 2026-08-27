@@ -13,6 +13,9 @@ const walletRoutes = require('./routes/wallet');
 const aiRoutes = require('./routes/ai');
 const adminRoutes = require('./routes/admin');
 const adsRoutes = require('./routes/ads');
+const feedbackRoutes = require('./routes/feedback');
+const contentRoutes = require('./routes/content');
+const ratingsRoutes = require('./routes/ratings');
 const { AD_IMAGES_DIR } = require('./lib/adUpload');
 const { PHOTO_DIR } = require('./lib/photoUpload');
 
@@ -78,6 +81,9 @@ app.use('/api/professors', professorRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/ads', adsRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/content', contentRoutes);
+app.use('/api/ratings', ratingsRoutes);
 
 // Gestion d'erreurs centralisée (ex: erreurs multer, exceptions non gérées dans les routes)
 app.use((err, req, res, next) => {

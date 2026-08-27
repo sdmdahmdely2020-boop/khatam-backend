@@ -143,10 +143,12 @@ CREATE TABLE IF NOT EXISTS ads (
   createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Codes de vérification par email (inscription). Toujours utilisée, que
--- l'envoi Gmail (voir lib/email.js) soit configuré ou non — contrairement à
--- Twilio Verify (SMS, abandonné : payant), l'envoi par email n'est qu'un
--- transport, il ne gère pas lui-même l'état des codes.
+-- Codes de vérification par email (inscription, et depuis le 27/08 aussi
+-- réinitialisation de mot de passe — voir la colonne "purpose" ajoutée plus
+-- bas). Toujours utilisée, que l'envoi Gmail (voir lib/email.js) soit
+-- configuré ou non — contrairement à Twilio Verify (SMS, abandonné : payant),
+-- l'envoi par email n'est qu'un transport, il ne gère pas lui-même l'état des
+-- codes.
 CREATE TABLE IF NOT EXISTS email_codes (
   id        TEXT PRIMARY KEY,
   email     TEXT NOT NULL,
@@ -156,11 +158,57 @@ CREATE TABLE IF NOT EXISTS email_codes (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Messages de retour ("feedback") envoyés par n'importe qui (élève, professeur,
+-- ou visiteur non connecté) via un formulaire public — voir routes/feedback.js.
+-- Toujours enregistré ici, indépendamment du succès de la notification
+-- WhatsApp (voir lib/whatsapp.js) : whatsappSent trace seulement si la
+-- notification est aussi partie côté WhatsApp, jamais une condition pour
+-- garder ou non le message.
+CREATE TABLE IF NOT EXISTS feedback (
+  id            TEXT PRIMARY KEY,
+  userId        TEXT REFERENCES users(id),
+  name          TEXT,
+  contact       TEXT,
+  message       TEXT NOT NULL,
+  whatsappSent  INTEGER NOT NULL DEFAULT 0,
+  createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Note de l'application elle-même (pas d'un document précis) — étoiles 1 à 5
+-- + commentaire facultatif, un seul avis par utilisateur (UNIQUE(userId), un
+-- nouvel envoi remplace l'ancien). Visible uniquement par l'administrateur
+-- (voir routes/admin.js) — demandé par sidi le 27/08 pour savoir ce que les
+-- utilisateurs pensent de Khatam.
+CREATE TABLE IF NOT EXISTS app_ratings (
+  id         TEXT PRIMARY KEY,
+  userId     TEXT NOT NULL REFERENCES users(id),
+  role       TEXT NOT NULL,
+  stars      INTEGER NOT NULL CHECK(stars BETWEEN 1 AND 5),
+  comment    TEXT,
+  createdAt  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(userId)
+);
+
+-- Messagerie simple entre l'administrateur (sidi) et un professeur donné — un
+-- seul "fil" par professeur (pas de vraie messagerie multi-thread), demandé
+-- par sidi le 27/08 ("la relation entre l'admin et le prof"). readByAdmin/
+-- readByProfessor permettent d'afficher un badge "non lu" de chaque côté.
+CREATE TABLE IF NOT EXISTS admin_messages (
+  id               TEXT PRIMARY KEY,
+  professorId      TEXT NOT NULL REFERENCES users(id),
+  sender           TEXT NOT NULL CHECK(sender IN ('admin','professor')),
+  body             TEXT NOT NULL,
+  readByAdmin      INTEGER NOT NULL DEFAULT 0,
+  readByProfessor  INTEGER NOT NULL DEFAULT 0,
+  createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_documents_filters ON documents(serie, matiere, annee, type);
 CREATE INDEX IF NOT EXISTS idx_documents_prof ON documents(professorId);
 CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(userId);
 CREATE INDEX IF NOT EXISTS idx_likes_prof ON likes(professorId);
 CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email);
+CREATE INDEX IF NOT EXISTS idx_admin_messages_prof ON admin_messages(professorId);
 `);
 
 // Migration légère : ajoute les colonnes introduites après la création initiale
@@ -185,6 +233,18 @@ ensureColumn('ai_submissions', 'answerFilePath', 'TEXT');
 ensureColumn('ai_submissions', 'answerFileType', 'TEXT');
 ensureColumn('ai_submissions', 'strengthsJson', 'TEXT');
 ensureColumn('ai_submissions', 'weaknessesJson', 'TEXT');
+// "zone" (catalog|dashboard) indique où une pub "banner" doit s'afficher — le
+// carrousel du catalogue public et celui des tableaux de bord connectés sont
+// deux emplacements distincts (demande de sidi, 27/08). Colonne additive
+// plutôt qu'un ajout à la contrainte CHECK(placement...) existante, plus
+// simple et plus sûre à migrer sur une base SQLite déjà en production.
+ensureColumn('ads', 'zone', "TEXT NOT NULL DEFAULT 'catalog'");
+// "purpose" distingue un code envoyé pour vérifier une inscription
+// ('signup', valeur historique) d'un code envoyé pour réinitialiser un mot de
+// passe oublié ('reset', voir routes/auth.js POST /forgot-password) — sans
+// cette colonne, demander un code de réinitialisation invaliderait par erreur
+// un code d'inscription en attente pour la même adresse email (et vice versa).
+ensureColumn('email_codes', 'purpose', "TEXT NOT NULL DEFAULT 'signup'");
 
 // Vérification de l'email (gratuite, via un compte Gmail personnel — voir
 // lib/email.js ; le SMS payant via Twilio a été abandonné à la demande de

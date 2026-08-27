@@ -79,4 +79,39 @@ router.post('/me/boost', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
   res.json({ boosted: true, boostActiveUntil: until });
 });
 
+// GET /api/professors/me/messages — fil de discussion (un seul, admin <->
+// ce professeur) du professeur connecté. Marque les messages envoyés par
+// l'admin comme lus par le professeur (miroir de la route admin équivalente
+// dans routes/admin.js, qui marque les messages du professeur comme lus par
+// l'admin).
+router.get('/me/messages', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
+  const rows = db.prepare(`SELECT * FROM admin_messages WHERE professorId = ? ORDER BY createdAt ASC`).all(req.user.id);
+  db.prepare(`UPDATE admin_messages SET readByProfessor = 1 WHERE professorId = ? AND sender = 'admin'`).run(req.user.id);
+  res.json({ messages: rows });
+});
+
+// POST /api/professors/me/messages  { body } — le professeur connecté
+// envoie un message à l'administrateur.
+router.post('/me/messages', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
+  const { body } = req.body || {};
+  if (!body || !String(body).trim()) {
+    return res.status(400).json({ error: 'MISSING_FIELDS', message: 'Message requis.' });
+  }
+  const id = newId('msg');
+  db.prepare(`
+    INSERT INTO admin_messages (id, professorId, sender, body, readByAdmin, readByProfessor)
+    VALUES (?, ?, 'professor', ?, 0, 1)
+  `).run(id, req.user.id, String(body).trim().slice(0, 2000));
+  res.status(201).json({ message: db.prepare('SELECT * FROM admin_messages WHERE id = ?').get(id) });
+});
+
+// GET /api/professors/me/messages/unread-count — badge "non lu" côté
+// professeur (nombre de messages de l'admin pas encore lus).
+router.get('/me/messages/unread-count', requireAuth({ roles: ['PROFESSOR'] }), (req, res) => {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS n FROM admin_messages WHERE professorId = ? AND sender = 'admin' AND readByProfessor = 0
+  `).get(req.user.id);
+  res.json({ count: row.n });
+});
+
 module.exports = router;
