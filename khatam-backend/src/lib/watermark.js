@@ -36,10 +36,14 @@ async function watermarkPdf(sourceBytes, { label, timestamp }) {
   const pages = pdfDoc.getPages();
   for (const page of pages) {
     const { width, height } = page.getSize();
-    const fontSize = 10;
+    // Filigrane rendu visible à l'œil nu (avant : taille 10, opacité 0.12 —
+    // quasiment invisible une fois la page compressée en JPEG côté
+    // visionneuse sécurisée). Le but d'un filigrane est de dissuader le
+    // partage en le rendant visible, pas seulement techniquement présent.
+    const fontSize = 13;
     const textWidth = font.widthOfTextAtSize(tile, fontSize);
     const stepX = textWidth + 60;
-    const stepY = 70;
+    const stepY = 85;
 
     for (let y = -height; y < height * 2; y += stepY) {
       for (let x = -width; x < width * 2; x += stepX) {
@@ -49,7 +53,7 @@ async function watermarkPdf(sourceBytes, { label, timestamp }) {
           size: fontSize,
           font,
           color: rgb(0.6, 0.1, 0.1),
-          opacity: 0.12,
+          opacity: 0.28,
           rotate: degrees(-28),
         });
       }
