@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../lib/db');
 const { newId } = require('../lib/id');
-const { JWT_SECRET, requireAuth } = require('../middleware/auth');
+const { JWT_SECRET, requireAuth, ENFORCE_SINGLE_DEVICE } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimit');
 const { photoUpload, PHOTO_DIR } = require('../lib/photoUpload');
 const { sendVerificationEmail, checkVerificationCode } = require('../lib/email');
@@ -50,6 +50,14 @@ function publicUser(u) {
 // vérification de l'email connecte directement l'élève/professeur, sans lui
 // faire refaire un /login séparé juste après).
 function bindDeviceOrThrow(user, deviceId, deviceLabel) {
+  // Désactivée pour le moment (voir ENFORCE_SINGLE_DEVICE dans
+  // middleware/auth.js) : ne bloque plus, et ne réécrit plus non plus
+  // deviceId à chaque connexion tant que c'est désactivé — pour ne pas
+  // perdre silencieusement l'ancienne valeur si la règle est un jour
+  // réactivée avec des comptes déjà liés à un appareil différent entre
+  // temps.
+  if (!ENFORCE_SINGLE_DEVICE) return;
+
   if (!user.deviceId) {
     db.prepare(`UPDATE users SET deviceId = ?, deviceBoundAt = datetime('now'), deviceLabel = ? WHERE id = ?`)
       .run(deviceId, deviceLabel || null, user.id);
