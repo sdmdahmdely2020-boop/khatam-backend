@@ -16,6 +16,17 @@ if (!JWT_SECRET) {
   );
 }
 
+// Règle "un compte = un seul appareil" — DÉSACTIVÉE pour le moment (28/08,
+// demande explicite de sidi : le blocage gênait ses propres tests, où
+// Flutter web change de port — donc d'"appareil" vu du serveur — à chaque
+// lancement). Peut être réactivée sans toucher au code : ajouter la variable
+// d'environnement ENFORCE_SINGLE_DEVICE=true sur Render et redéployer.
+// Tant qu'elle reste désactivée, un même compte payant peut être utilisé
+// simultanément sur plusieurs appareils (partage de compte possible) — à
+// remettre avant une ouverture large à de vrais utilisateurs payants si ce
+// risque devient un problème concret.
+const ENFORCE_SINGLE_DEVICE = process.env.ENFORCE_SINGLE_DEVICE === 'true';
+
 // Vérifie le JWT et charge l'utilisateur. Vérifie aussi que la requête vient
 // bien de l'appareil lié au compte (en-tête X-Device-Id) — c'est ici que la
 // règle "un compte = un seul téléphone" est réellement appliquée côté serveur.
@@ -41,7 +52,7 @@ function requireAuth(opts = {}) {
       return res.status(403).json({ error: 'FORBIDDEN', message: 'Accès réservé à un autre type de compte.' });
     }
 
-    if (enforceDevice && user.deviceId) {
+    if (enforceDevice && ENFORCE_SINGLE_DEVICE && user.deviceId) {
       const incomingDevice = req.headers['x-device-id'];
       if (!incomingDevice || incomingDevice !== user.deviceId) {
         return res.status(409).json({
@@ -115,4 +126,4 @@ function requireWebhookKey(req, res, next) {
   next();
 }
 
-module.exports = { requireAuth, optionalAuth, requireAdminKey, requireWebhookKey, JWT_SECRET };
+module.exports = { requireAuth, optionalAuth, requireAdminKey, requireWebhookKey, JWT_SECRET, ENFORCE_SINGLE_DEVICE };
