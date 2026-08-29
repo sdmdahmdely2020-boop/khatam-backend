@@ -8,6 +8,7 @@ const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { hasAccess } = require('../lib/access');
 const { deleteDocumentCascade } = require('../lib/cascade');
 const { ensureDocumentPreview } = require('../lib/preview');
+const { effectivePlan, getSubscriptionSettings } = require('../lib/subscriptions');
 
 const router = express.Router();
 
@@ -20,8 +21,26 @@ function isBoosted(professor) {
   return !!(professor.boostActiveUntil && new Date(professor.boostActiveUntil) > new Date());
 }
 
+// Modèle hybride (29/08, voir lib/subscriptions.js) : un abonné Basic garde
+// le prix normal en base (colonne "prix", jamais modifiée — le site web, qui
+// ne connaît pas encore les abonnements, doit continuer à voir le vrai prix)
+// mais l'app affiche en plus "effectivePrix", réduit, calculé ici à la
+// lecture. Le montant réellement facturé est recalculé indépendamment côté
+// POST /api/payments/initiate (jamais fait confiance à une valeur envoyée
+// par le client) — cette fonction ne sert qu'à l'AFFICHAGE.
+function effectivePriceFor(doc, viewerId) {
+  if (!viewerId || doc.free) return { effectivePrix: doc.prix, subscriptionDiscountApplied: false };
+  const viewer = db.prepare('SELECT subscriptionPlan, subscriptionExpiresAt FROM users WHERE id = ?').get(viewerId);
+  if (!viewer || effectivePlan(viewer).plan !== 'basic') {
+    return { effectivePrix: doc.prix, subscriptionDiscountApplied: false };
+  }
+  const { basicDiscountPercent } = getSubscriptionSettings();
+  return { effectivePrix: Math.round(doc.prix * (1 - basicDiscountPercent / 100)), subscriptionDiscountApplied: true };
+}
+
 function toPublicDoc(doc, viewerId) {
   const professor = db.prepare('SELECT id, fullName, matieres, photoPath FROM users WHERE id = ?').get(doc.professorId);
+  const { effectivePrix, subscriptionDiscountApplied } = effectivePriceFor(doc, viewerId);
   return {
     id: doc.id,
     title: doc.title,
@@ -30,6 +49,8 @@ function toPublicDoc(doc, viewerId) {
     annee: doc.annee,
     type: doc.type,
     prix: doc.prix,
+    effectivePrix,
+    subscriptionDiscountApplied,
     free: !!doc.free,
     adUnlock: !!doc.adUnlock,
     aiGrading: !!doc.aiGrading,

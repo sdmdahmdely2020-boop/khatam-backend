@@ -7,6 +7,7 @@ const multer = require('multer');
 const authRoutes = require('./routes/auth');
 const documentRoutes = require('./routes/documents');
 const paymentRoutes = require('./routes/payments');
+const subscriptionRoutes = require('./routes/subscriptions'); // abonnements Basic/Premium (modèle hybride, 29/08)
 const accessRoutes = require('./routes/access'); // /documents/:id/view, /ad-unlock, /favorite
 const professorRoutes = require('./routes/professors');
 const walletRoutes = require('./routes/wallet');
@@ -38,13 +39,6 @@ const ALLOWED_ORIGINS = process.env.FRONTEND_ORIGIN
   ? [...DEFAULT_ALLOWED_ORIGINS, ...process.env.FRONTEND_ORIGIN.split(',').map((o) => o.trim())]
   : DEFAULT_ALLOWED_ORIGINS;
 
-// Pendant le développement, Flutter (`flutter run -d chrome`) sert l'app
-// sur localhost/127.0.0.1 avec un port choisi au hasard à chaque lancement
-// — impossible à lister à l'avance dans ALLOWED_ORIGINS. On autorise donc
-// n'importe quel port sur localhost/127.0.0.1 spécifiquement (jamais un
-// autre domaine), en plus de la liste fixe ci-dessus.
-const LOCAL_DEV_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/;
-
 app.use(cors({
   origin: (origin, cb) => {
     // Pas d'en-tête Origin (ex. curl, appel serveur-à-serveur, un futur webhook
@@ -55,7 +49,7 @@ app.use(cors({
     // bloquée côté navigateur comme il se doit), sans déclencher le
     // gestionnaire d'erreurs central ni polluer les logs d'un "500 Internal
     // Error" à chaque scan/bot qui appelle l'API depuis une origine tierce.
-    cb(null, ALLOWED_ORIGINS.includes(origin) || LOCAL_DEV_ORIGIN_RE.test(origin));
+    cb(null, ALLOWED_ORIGINS.includes(origin));
   },
 }));
 app.use(express.json({ limit: '2mb' }));
@@ -83,6 +77,7 @@ app.use('/uploads/photos', noSniff, express.static(PHOTO_DIR));
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api', accessRoutes); // monte /api/documents/:id/view, /api/documents/:id/ad-unlock, /api/favorites...
 app.use('/api', aiRoutes); // /api/documents/:id/ai-grade, /api/ai/history
 app.use('/api/professors', professorRoutes);

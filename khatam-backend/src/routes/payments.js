@@ -6,6 +6,7 @@ const { requireAuth, requireWebhookKey } = require('../middleware/auth');
 const { initiatePayment, verifyWebhookSignature, confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments');
 const { getPaymentNumbers } = require('../lib/settings');
 const { receiptUpload } = require('../lib/receiptUpload');
+const { effectivePlan, getSubscriptionSettings } = require('../lib/subscriptions');
 
 const router = express.Router();
 
@@ -24,6 +25,26 @@ router.post('/initiate', requireAuth({ roles: ['STUDENT'] }), async (req, res) =
   if (!doc) return res.status(404).json({ error: 'NOT_FOUND', message: 'Document introuvable.' });
   if (doc.free) return res.status(400).json({ error: 'ALREADY_FREE', message: 'Ce document est déjà gratuit.' });
 
+  // Modèle hybride (29/08, voir lib/subscriptions.js) : un abonné Premium a
+  // déjà accès à tout, un achat individuel n'a pas de sens pour lui — on
+  // bloque ici plutôt que de laisser créer un achat inutile. Un abonné Basic
+  // continue d'acheter à l'unité comme avant, mais avec une réduction
+  // appliquée sur le montant réellement facturé (et donc crédité au
+  // professeur, voir confirmPurchase() dans lib/payments.js — inchangée,
+  // elle crédite déjà "amount" tel quel).
+  const currentPlan = effectivePlan(req.user).plan;
+  if (currentPlan === 'premium') {
+    return res.status(409).json({
+      error: 'ALREADY_PREMIUM',
+      message: 'Vous avez un abonnement Premium actif : ce document est déjà inclus, aucun achat nécessaire.',
+    });
+  }
+  let amount = doc.prix;
+  if (currentPlan === 'basic') {
+    const { basicDiscountPercent } = getSubscriptionSettings();
+    amount = Math.round(doc.prix * (1 - basicDiscountPercent / 100));
+  }
+
   const payTo = getPaymentNumbers()[method];
   if (!payTo) {
     return res.status(400).json({
@@ -38,20 +59,21 @@ router.post('/initiate', requireAuth({ roles: ['STUDENT'] }), async (req, res) =
   if (already) return res.status(409).json({ error: 'ALREADY_UNLOCKED', message: 'Déjà débloqué.' });
 
   const id = newId('pur');
-  const result = await initiatePayment({ method, phone: req.user.phone, amount: doc.prix, reference: id });
+  const result = await initiatePayment({ method, phone: req.user.phone, amount, reference: id });
 
   db.prepare(`
     INSERT INTO purchases (id, userId, documentId, amount, method, status, providerRef)
     VALUES (@id, @userId, @documentId, @amount, @method, 'pending', @providerRef)
-  `).run({ id, userId: req.user.id, documentId, amount: doc.prix, method, providerRef: result.providerRef });
+  `).run({ id, userId: req.user.id, documentId, amount, method, providerRef: result.providerRef });
 
   res.status(201).json({
     purchaseId: id,
     status: 'pending',
     providerRef: result.providerRef,
-    amount: doc.prix,
+    amount,
+    subscriptionDiscountApplied: currentPlan === 'basic',
     payTo,
-    instructions: `Envoyez ${doc.prix} MRU au numéro ${payTo} via ${method}, puis entrez ici le numéro de reçu que votre application vous donne.`,
+    instructions: `Envoyez ${amount} MRU au numéro ${payTo} via ${method}, puis entrez ici le numéro de reçu que votre application vous donne.`,
   });
 });
 

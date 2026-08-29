@@ -14,6 +14,13 @@ const { confirmPurchase, rejectPurchase, PROVIDERS } = require('../lib/payments'
 const { getPaymentNumbers, setPaymentNumber, getSetting, setSetting } = require('../lib/settings');
 const { adUpload } = require('../lib/adUpload');
 const { deleteDocumentCascade, deleteUserCascade } = require('../lib/cascade');
+const {
+  getSubscriptionSettings,
+  setSubscriptionSetting,
+  confirmSubscription,
+  rejectSubscription,
+  effectivePlan,
+} = require('../lib/subscriptions');
 
 const router = express.Router();
 // adminLimiter avant requireAdminKey : on veut limiter le débit des essais de
@@ -86,6 +93,80 @@ router.post('/purchases/:id/reject', (req, res) => {
   } catch (e) {
     res.status(e.status || 500).json({ error: 'ERROR', message: e.message });
   }
+});
+
+// --- Abonnements Basic/Premium (modèle hybride, 29/08) ---
+// S'ajoute au circuit d'achat de document ci-dessus, ne le remplace pas.
+// Même principe : confirmation manuelle après vérification du numéro de reçu.
+
+// GET /api/admin/subscription-settings — prix/durée/réduction actuellement configurés.
+router.get('/subscription-settings', (req, res) => {
+  res.json({ settings: getSubscriptionSettings() });
+});
+
+// PATCH /api/admin/subscription-settings  { basicPrice?, premiumPrice?, durationDays?, basicDiscountPercent? }
+router.patch('/subscription-settings', (req, res) => {
+  const body = req.body || {};
+  const keys = ['basicPrice', 'premiumPrice', 'durationDays', 'basicDiscountPercent'];
+  try {
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(body, key)) {
+        setSubscriptionSetting(key, body[key]);
+      }
+    }
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: 'ERROR', message: e.message });
+  }
+  res.json({ settings: getSubscriptionSettings() });
+});
+
+// GET /api/admin/subscriptions/pending — abonnements en attente de vérification manuelle.
+router.get('/subscriptions/pending', (req, res) => {
+  const rows = db.prepare(`
+    SELECT sp.id, sp.plan, sp.amount, sp.durationDays, sp.method, sp.studentRef, sp.providerRef, sp.createdAt,
+           s.fullName AS studentName, s.phone AS studentPhone
+    FROM subscription_purchases sp
+    JOIN users s ON s.id = sp.userId
+    WHERE sp.status = 'pending'
+    ORDER BY sp.createdAt ASC
+  `).all();
+  res.json({ subscriptions: rows });
+});
+
+// POST /api/admin/subscriptions/:id/confirm
+router.post('/subscriptions/:id/confirm', (req, res) => {
+  try {
+    const purchase = confirmSubscription(req.params.id);
+    res.json({ purchase });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: 'ERROR', message: e.message });
+  }
+});
+
+// POST /api/admin/subscriptions/:id/reject
+router.post('/subscriptions/:id/reject', (req, res) => {
+  try {
+    const purchase = rejectSubscription(req.params.id);
+    res.json({ purchase });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: 'ERROR', message: e.message });
+  }
+});
+
+// GET /api/admin/subscriptions/users — tous les élèves ayant DÉJÀ eu un
+// abonnement au moins une fois (subscriptionPlan != 'free'), avec leur statut
+// RÉEL calculé au moment de la lecture (effectivePlan — un abonnement expiré
+// redevient "free" ici sans qu'aucune tâche de fond n'ait eu besoin de
+// l'écrire en base). Sert au panneau admin.html pour afficher un tableau
+// "abonnés actifs" sans dupliquer la logique de date côté client.
+router.get('/subscriptions/users', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, fullName, phone, email, subscriptionPlan, subscriptionExpiresAt
+    FROM users WHERE role = 'STUDENT' AND subscriptionPlan != 'free'
+    ORDER BY subscriptionExpiresAt DESC
+  `).all();
+  const enriched = rows.map((u) => ({ ...u, effectivePlan: effectivePlan(u).plan }));
+  res.json({ users: enriched });
 });
 
 // --- Approbation des comptes professeurs ---
@@ -265,6 +346,10 @@ router.get('/overview', (req, res) => {
     favorites: db.prepare('SELECT COUNT(*) n FROM favorites').get().n,
     likes: db.prepare('SELECT COUNT(*) n FROM likes').get().n,
     aiSubmissions: db.prepare('SELECT COUNT(*) n FROM ai_submissions').get().n,
+    subscriptionPurchases: db.prepare('SELECT COUNT(*) n FROM subscription_purchases').get().n,
+    activeSubscriptions: db.prepare(
+      `SELECT COUNT(*) n FROM users WHERE subscriptionPlan != 'free' AND subscriptionExpiresAt IS NOT NULL AND subscriptionExpiresAt > datetime('now')`
+    ).get().n,
   };
 
   res.json({ users, documents, counts });

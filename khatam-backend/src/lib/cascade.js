@@ -76,6 +76,13 @@ function deleteUserCascade(userId) {
     db.prepare('DELETE FROM feedback WHERE userId = ?').run(userId);
     db.prepare('DELETE FROM app_ratings WHERE userId = ?').run(userId);
     db.prepare('DELETE FROM admin_messages WHERE professorId = ?').run(userId);
+    // Table ajoutée le 29/08 (abonnements Basic/Premium, voir
+    // lib/subscriptions.js) — référence users(id), donc DOIT être nettoyée
+    // ici comme les autres, avant le DELETE FROM users ci-dessous. Ajoutée
+    // dès la création de la table pour ne PAS répéter le bug du 27/08 (une
+    // table oubliée ici faisait échouer toute la transaction dès qu'un
+    // compte y avait une ligne — voir le commentaire détaillé plus haut).
+    db.prepare('DELETE FROM subscription_purchases WHERE userId = ?').run(userId);
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
   });
   tx();

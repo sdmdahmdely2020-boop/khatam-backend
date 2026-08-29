@@ -79,6 +79,27 @@ CREATE TABLE IF NOT EXISTS purchases (
   confirmedAt TEXT
 );
 
+-- Achats d'abonnement (Basic/Premium) — table séparée de "purchases" (qui
+-- reste réservée aux achats de documents à l'unité, modèle inchangé) car un
+-- abonnement n'est pas lié à un documentId précis. Même forme/mêmes statuts
+-- que "purchases" pour rester cohérent avec le circuit de confirmation
+-- manuelle existant (Bankily/Masrivi/Sedad, voir lib/payments.js et
+-- routes/admin.js). Décision du 29/08 : modèle HYBRIDE — ceci s'ajoute à
+-- l'achat à l'unité, ne le remplace pas (voir lib/subscriptions.js).
+CREATE TABLE IF NOT EXISTS subscription_purchases (
+  id           TEXT PRIMARY KEY,
+  userId       TEXT NOT NULL REFERENCES users(id),
+  plan         TEXT NOT NULL CHECK(plan IN ('basic','premium')),
+  amount       INTEGER NOT NULL,
+  durationDays INTEGER NOT NULL,
+  method       TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending',
+  providerRef  TEXT,
+  studentRef   TEXT,
+  createdAt    TEXT NOT NULL DEFAULT (datetime('now')),
+  confirmedAt  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ad_unlocks (
   id         TEXT PRIMARY KEY,
   userId     TEXT NOT NULL REFERENCES users(id),
@@ -227,6 +248,7 @@ CREATE INDEX IF NOT EXISTS idx_likes_prof ON likes(professorId);
 CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email);
 CREATE INDEX IF NOT EXISTS idx_admin_messages_prof ON admin_messages(professorId);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_from ON whatsapp_messages(fromNumber);
+CREATE INDEX IF NOT EXISTS idx_subscription_purchases_user ON subscription_purchases(userId);
 `);
 
 // Migration légère : ajoute les colonnes introduites après la création initiale
@@ -263,6 +285,14 @@ ensureColumn('ads', 'zone', "TEXT NOT NULL DEFAULT 'catalog'");
 // cette colonne, demander un code de réinitialisation invaliderait par erreur
 // un code d'inscription en attente pour la même adresse email (et vice versa).
 ensureColumn('email_codes', 'purpose', "TEXT NOT NULL DEFAULT 'signup'");
+
+// Abonnement Basic/Premium (modèle hybride, 29/08 — voir lib/subscriptions.js
+// pour la logique). subscriptionExpiresAt vaut NULL tant qu'aucun abonnement
+// n'a jamais été acheté ; un abonnement expiré n'est PAS remis à 'free' ici
+// automatiquement (pas de tâche planifiée) — c'est effectivePlan() qui compare
+// la date à chaque lecture, donc aucune migration/tâche de fond n'est nécessaire.
+ensureColumn('users', 'subscriptionPlan', "TEXT NOT NULL DEFAULT 'free'");
+ensureColumn('users', 'subscriptionExpiresAt', 'TEXT');
 
 // Vérification de l'email (gratuite, via un compte Gmail personnel — voir
 // lib/email.js ; le SMS payant via Twilio a été abandonné à la demande de
