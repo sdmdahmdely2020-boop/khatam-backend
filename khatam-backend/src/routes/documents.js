@@ -122,6 +122,86 @@ router.get('/', optionalAuth(), (req, res) => {
   });
 });
 
+// GET /api/documents/mine — profil élève (29/08) : documents que CET élève a
+// réellement débloqués par une action concrète (achat confirmé ou publicité
+// vue), plus un résumé "progression simple". Placée AVANT "GET /:id"
+// ci-dessous, sinon Express prendrait "mine" pour un id de document.
+//
+// Volontairement DIFFÉRENT de la liste "tout ce qui est unlocked=true" pour un
+// abonné Premium (qui couvre alors tout le catalogue publié, voir hasAccess())
+// — un Premium n'a rien "acheté" individuellement, donc cette liste peut être
+// courte/vide pour lui tout en étant Premium, ce qui est correct : "progress"
+// ci-dessous indique isPremium séparément pour que l'app puisse expliquer
+// pourquoi la liste ne reflète pas tout ce à quoi il/elle a accès.
+router.get('/mine', requireAuth({ roles: ['STUDENT'] }), (req, res) => {
+  const userId = req.user.id;
+
+  const purchasedRows = db.prepare(`
+    SELECT d.*, pu.amount as purchaseAmount, pu.method as purchaseMethod, pu.confirmedAt as purchasedAt
+    FROM purchases pu JOIN documents d ON d.id = pu.documentId
+    WHERE pu.userId = ? AND pu.status = 'confirmed'
+    ORDER BY pu.confirmedAt DESC
+  `).all(userId);
+
+  const adUnlockedRows = db.prepare(`
+    SELECT d.*, au.createdAt as unlockedAt
+    FROM ad_unlocks au JOIN documents d ON d.id = au.documentId
+    WHERE au.userId = ?
+    ORDER BY au.createdAt DESC
+  `).all(userId);
+
+  // Dédoublonne par document (un même document ne doit apparaître qu'une
+  // fois même s'il a été débloqué par pub PUIS acheté plus tard) — l'achat
+  // gagne, car c'est l'action la plus significative.
+  const seen = new Set();
+  const documents = [];
+
+  for (const row of purchasedRows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    documents.push({
+      ...toPublicDoc(row, userId),
+      acquiredVia: 'purchase',
+      acquiredAt: row.purchasedAt,
+      amountPaid: row.purchaseAmount,
+      method: row.purchaseMethod,
+    });
+  }
+  for (const row of adUnlockedRows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    documents.push({
+      ...toPublicDoc(row, userId),
+      acquiredVia: 'ad',
+      acquiredAt: row.unlockedAt,
+      amountPaid: 0,
+      method: null,
+    });
+  }
+  documents.sort((a, b) => (a.acquiredAt < b.acquiredAt ? 1 : -1));
+
+  const totalSpentMru = purchasedRows.reduce((sum, r) => sum + (r.purchaseAmount || 0), 0);
+  const byMatiere = {};
+  for (const doc of documents) {
+    byMatiere[doc.matiere] = (byMatiere[doc.matiere] || 0) + 1;
+  }
+
+  const subscriber = db.prepare('SELECT subscriptionPlan, subscriptionExpiresAt, createdAt FROM users WHERE id = ?').get(userId);
+  const plan = effectivePlan(subscriber).plan;
+
+  res.json({
+    documents,
+    progress: {
+      totalUnlocked: documents.length,
+      totalSpentMru,
+      byMatiere,
+      memberSince: subscriber.createdAt,
+      isPremium: plan === 'premium',
+      isBasic: plan === 'basic',
+    },
+  });
+});
+
 // GET /api/documents/:id
 // Un document dépublié (statut !== 'publie') n'est visible qu'à son auteur —
 // sinon son id suffirait à le consulter en entier malgré la dépublication
